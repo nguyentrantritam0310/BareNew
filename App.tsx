@@ -1,118 +1,106 @@
-/**
- * Sample React Native App
- * https://github.com/facebook/react-native
- *
- * @format
- */
-
 import React from 'react';
-import type {PropsWithChildren} from 'react';
-import {
-  SafeAreaView,
-  ScrollView,
-  StatusBar,
-  StyleSheet,
-  Text,
-  useColorScheme,
-  View,
-} from 'react-native';
+import { NavigationContainer } from '@react-navigation/native';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { StatusBar } from 'react-native';
 
-import {
-  Colors,
-  DebugInstructions,
-  Header,
-  LearnMoreLinks,
-  ReloadInstructions,
-} from 'react-native/Libraries/NewAppScreen';
+// Import contexts
+import { AuthProvider, useAuth } from './src/contexts/AuthContext';
 
-type SectionProps = PropsWithChildren<{
-  title: string;
-}>;
+// Import screens
+import LoginScreen from './src/screens/login';
+import HomeScreen from './src/screens/(tabs)/index';
+import AttendanceLayout from './src/screens/attendance/_layout';
+import ProfileScreen from './src/screens/profile';
+import PayslipScreen from './src/screens/payslip';
+import CheckinScreen from './src/screens/checkin';
+import FaceRegistrationScreen from './src/screens/FaceRegistrationScreen';
 
-function Section({children, title}: SectionProps): React.JSX.Element {
-  const isDarkMode = useColorScheme() === 'dark';
+// Import Leave screens
+import LeaveListScreen from './src/screens/leave/index';
+import AddLeaveScreen from './src/screens/leave/add';
+import EditLeaveScreen from './src/screens/leave/edit/[id]';
+import LeaveDetailScreen from './src/screens/leave/[id]';
+import OvertimeListScreen from './src/screens/overtime/index';
+import AddOvertimeScreen from './src/screens/overtime/add';
+import EditOvertimeScreen from './src/screens/overtime/edit/[id]';
+import OvertimeDetailScreen from './src/screens/overtime/[id]';
+
+const Stack = createNativeStackNavigator();
+
+// Leave Stack Navigator
+function LeaveStackNavigator() {
   return (
-    <View style={styles.sectionContainer}>
-      <Text
-        style={[
-          styles.sectionTitle,
-          {
-            color: isDarkMode ? Colors.white : Colors.black,
-          },
-        ]}>
-        {title}
-      </Text>
-      <Text
-        style={[
-          styles.sectionDescription,
-          {
-            color: isDarkMode ? Colors.light : Colors.dark,
-          },
-        ]}>
-        {children}
-      </Text>
-    </View>
+    <Stack.Navigator
+      screenOptions={{
+        headerShown: false,
+      }}
+    >
+      <Stack.Screen name="LeaveList" component={LeaveListScreen} />
+      <Stack.Screen name="AddLeave" component={AddLeaveScreen} />
+      <Stack.Screen name="EditLeave" component={EditLeaveScreen} />
+      <Stack.Screen name="LeaveDetail" component={LeaveDetailScreen} />
+    </Stack.Navigator>
   );
 }
 
-function App(): React.JSX.Element {
-  const isDarkMode = useColorScheme() === 'dark';
-
-  const backgroundStyle = {
-    backgroundColor: isDarkMode ? Colors.darker : Colors.lighter,
-  };
-
+// Overtime Stack Navigator
+function OvertimeStackNavigator() {
   return (
-    <SafeAreaView style={backgroundStyle}>
-      <StatusBar
-        barStyle={isDarkMode ? 'light-content' : 'dark-content'}
-        backgroundColor={backgroundStyle.backgroundColor}
-      />
-      <ScrollView
-        contentInsetAdjustmentBehavior="automatic"
-        style={backgroundStyle}>
-        <Header />
-        <View
-          style={{
-            backgroundColor: isDarkMode ? Colors.black : Colors.white,
-          }}>
-          <Section title="Step One">
-            Edit <Text style={styles.highlight}>App.tsx</Text> to change this
-            screen and then come back to see your edits.
-          </Section>
-          <Section title="See Your Changes">
-            <ReloadInstructions />
-          </Section>
-          <Section title="Debug">
-            <DebugInstructions />
-          </Section>
-          <Section title="Learn More">
-            Read the docs to discover what to do next:
-          </Section>
-          <LearnMoreLinks />
-        </View>
-      </ScrollView>
-    </SafeAreaView>
+    <Stack.Navigator
+      screenOptions={{
+        headerShown: false,
+      }}
+    >
+      <Stack.Screen name="OvertimeList" component={OvertimeListScreen} />
+      <Stack.Screen name="AddOvertime" component={AddOvertimeScreen} />
+      <Stack.Screen name="EditOvertime" component={EditOvertimeScreen} />
+      <Stack.Screen name="OvertimeDetail" component={OvertimeDetailScreen} />
+    </Stack.Navigator>
   );
 }
 
-const styles = StyleSheet.create({
-  sectionContainer: {
-    marginTop: 32,
-    paddingHorizontal: 24,
-  },
-  sectionTitle: {
-    fontSize: 24,
-    fontWeight: '600',
-  },
-  sectionDescription: {
-    marginTop: 8,
-    fontSize: 18,
-    fontWeight: '400',
-  },
-  highlight: {
-    fontWeight: '700',
-  },
-});
+// Main Stack Navigator
+function MainStack() {
+  return (
+    <Stack.Navigator screenOptions={{ headerShown: false }}>
+      <Stack.Screen name="HomeMain" component={HomeScreen} />
+      <Stack.Screen name="AttendanceLayout" component={AttendanceLayout} />
+      <Stack.Screen name="Profile" component={ProfileScreen} />
+      <Stack.Screen name="Payslip" component={PayslipScreen} />
+      <Stack.Screen name="Checkin" component={CheckinScreen} />
+      <Stack.Screen name="Leave" component={LeaveStackNavigator} />
+      <Stack.Screen name="Overtime" component={OvertimeStackNavigator} />
+      <Stack.Screen name="FaceRegistration" component={FaceRegistrationScreen} />
+    </Stack.Navigator>
+  );
+}
 
-export default App;
+// Main App Component với Authentication
+function MainApp() {
+  const { isAuthenticated, isLoading } = useAuth();
+
+  if (isLoading) {
+    return null; // Hoặc loading screen
+  }
+
+  return (
+    <NavigationContainer>
+      <StatusBar barStyle="dark-content" backgroundColor="#fff" />
+      {isAuthenticated ? (
+        <MainStack />
+      ) : (
+        <Stack.Navigator screenOptions={{ headerShown: false }}>
+          <Stack.Screen name="Login" component={LoginScreen} />
+        </Stack.Navigator>
+      )}
+    </NavigationContainer>
+  );
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <MainApp />
+    </AuthProvider>
+  );
+}

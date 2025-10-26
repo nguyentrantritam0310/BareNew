@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleDisplayName</key>
-	<string>MobileAppBareNew</string>
+	<string>ConstructPro</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -33,7 +33,7 @@
 		<true/>
 	</dict>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string></string>
+	<string>This app needs access to location to provide location-based services.</string>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIRequiredDeviceCapabilities</key>
@@ -48,5 +48,31 @@
 	</array>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<false/>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>This app needs access to location to provide location-based services.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>This app needs access to location to provide location-based services.</string>
+	<key>UIAppFonts</key>
+	<array>
+		<string>antdesign.ttf</string>
+		<string>entypo.ttf</string>
+		<string>evilicons.ttf</string>
+		<string>feather.ttf</string>
+		<string>fontawesome.ttf</string>
+		<string>fontawesome5_brands.ttf</string>
+		<string>fontawesome5_regular.ttf</string>
+		<string>fontawesome5_solid.ttf</string>
+		<string>fontawesome6_brands.ttf</string>
+		<string>fontawesome6_regular.ttf</string>
+		<string>fontawesome6_solid.ttf</string>
+		<string>fontisto.ttf</string>
+		<string>foundation.ttf</string>
+		<string>ionicons.ttf</string>
+		<string>materialcommunityicons.ttf</string>
+		<string>materialicons.ttf</string>
+		<string>octicons.ttf</string>
+		<string>simplelineicons.ttf</string>
+		<string>zocial.ttf</string>
+	</array>
 </dict>
 </plist>

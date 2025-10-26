@@ -23,6 +23,9 @@ target 'MobileAppBareNew' do
     :app_path => "#{Pod::Config.instance.installation_root}/.."
   )
 
+  # ML Kit Face Detection
+  pod 'GoogleMLKit/FaceDetection'
+
   target 'MobileAppBareNewTests' do
     inherit! :complete
     # Pods for testing
