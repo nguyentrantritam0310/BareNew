@@ -26,7 +26,6 @@
 	<true/>
 	<key>NSAppTransportSecurity</key>
 	<dict>
-	  <!-- Do not change NSAllowsArbitraryLoads to true, or you will risk app rejection! -->
 		<key>NSAllowsArbitraryLoads</key>
 		<false/>
 		<key>NSAllowsLocalNetworking</key>
@@ -48,8 +47,6 @@
 	</array>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<false/>
-	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>This app needs access to location to provide location-based services.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>This app needs access to location to provide location-based services.</string>
 	<key>UIAppFonts</key>
@@ -73,6 +70,9 @@
 		<string>octicons.ttf</string>
 		<string>simplelineicons.ttf</string>
 		<string>zocial.ttf</string>
+		<string>Inter-Regular.ttf</string>
+		<string>Roboto-Regular.ttf</string>
+		<string>SpaceMono-Regular.ttf</string>
 	</array>
 </dict>
 </plist>

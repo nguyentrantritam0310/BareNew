@@ -113,6 +113,7 @@ android {
         
         buildConfigField "boolean", "IS_NEW_ARCHITECTURE_ENABLED", isNewArchitectureEnabled().toString()
         buildConfigField "boolean", "IS_HERMES_ENABLED", (findProperty("hermesEnabled") ?: "true").toString()
+        buildConfigField "boolean", "VisionCamera_enableFrameProcessors", "true"
         
         ndk {
             abiFilters(*reactNativeArchitectures())

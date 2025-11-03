@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { CameraView, useCameraPermissions } from 'expo-camera';
+import api from '../api';
 import Geolocation from '@react-native-community/geolocation';
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -16,7 +16,7 @@ import {
   View,
   Dimensions
 } from 'react-native';
-import MapPlaceholder from '../components/MapPlaceholder';
+import SimpleMapView from '../components/SimpleMapView';
 import SimpleFaceRecognitionCamera from '../components/SimpleFaceRecognitionCamera';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 // import { LinearGradient } from 'expo-linear-gradient';
@@ -38,168 +38,6 @@ function getDistance(lat1, lon1, lat2, lon2) {
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c;
 }
-
-const InternalCameraCheckIn = ({ onPictureTaken, onClose }) => {
-  const [facing, setFacing] = useState('front');
-  const [permission, requestPermission] = useCameraPermissions();
-  const [isCapturing, setIsCapturing] = useState(false);
-  const [capturedImage, setCapturedImage] = useState(null);
-  const [cameraReady, setCameraReady] = useState(false);
-  
-  const cameraRef = useRef(null);
-
-  useEffect(() => {
-    if (permission && !permission.granted) {
-      requestPermission();
-    }
-  }, [permission]);
-
-  const takePicture = async () => {
-    if (!cameraRef.current || isCapturing) return;
-    
-    setIsCapturing(true);
-    try {
-      const photo = await cameraRef.current.takePictureAsync({
-        quality: 0.1, // 10% quality - rất thấp
-        base64: true,
-        skipProcessing: false, // Cho phép xử lý để nén tốt hơn
-        exif: false
-      });
-      
-      console.log(`📸 Captured image size: ${photo.base64.length} characters (${Math.round(photo.base64.length/1024)}KB)`);
-      
-      setCapturedImage(photo);
-      onPictureTaken(photo);
-    } catch (error) {
-      console.error('Lỗi chụp ảnh:', error);
-      Alert.alert('Lỗi', 'Không thể chụp ảnh. Vui lòng thử lại.');
-    } finally {
-      setIsCapturing(false);
-    }
-  };
-
-
-  if (!permission) {
-    return <View />;
-  }
-
-  if (!permission.granted) {
-    return (
-      <View style={internalCameraStyles.permissionContainer}>
-        <Text style={internalCameraStyles.permissionText}>Cần quyền truy cập camera</Text>
-        <Button onPress={requestPermission} title="Cấp quyền" />
-      </View>
-    );
-  }
-
-
-
-  const toggleCameraType = () => {
-    setFacing(current => {
-       // Đảm bảo chuyển đổi đúng giá trị
-      const newFacing = current === 'back' ? 'front' : 'back';
-      console.log('Chuyển camera từ', current, 'sang', newFacing);
-      return newFacing;
-  });
-  };
-   const handleCameraReady = () => {
-    console.log('Camera đã sẵn sàng, loại camera:', facing);
-    setCameraReady(true);
-  };
-
-  const handleClose = () => {
-    setCapturedImage(null);
-    if (onClose) onClose();
-  };
- const cameraType = facing === 'front' ? 'front' : 'back';
-  return (
-    <View style={internalCameraStyles.container}>
-      <CameraView
-        ref={cameraRef} 
-        style={internalCameraStyles.camera} 
-        facing={cameraType}
-        onCameraReady={handleCameraReady}
-        ratio="16:9"
-      >
-        <View style={internalCameraStyles.header}>
-          <TouchableOpacity style={internalCameraStyles.closeBtn} onPress={handleClose}>
-            <Icon name="close" size={32} color="#fff" />
-          </TouchableOpacity>
-          
-          {/* Hiển thị loại camera hiện tại */}
-          <View style={internalCameraStyles.cameraTypeIndicator}>
-            <Text style={internalCameraStyles.cameraTypeText}>
-              Camera {facing === 'front' ? 'Trước' : 'Sau'}
-            </Text>
-          </View>
-        </View>
-
-        <View style={internalCameraStyles.footer}>
-          <TouchableOpacity 
-            style={internalCameraStyles.flipBtn} 
-            onPress={toggleCameraType}
-            disabled={!cameraReady}
-          >
-            <Icon name="camera-flip" size={28} color="#fff" />
-            <Text style={internalCameraStyles.flipText}>Đổi camera</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity 
-            style={[
-              internalCameraStyles.captureBtn,
-              (!cameraReady || isCapturing) && internalCameraStyles.captureBtnDisabled
-            ]} 
-            onPress={takePicture}
-            disabled={!cameraReady || isCapturing}
-          >
-            <View style={internalCameraStyles.captureInnerCircle}>
-              {isCapturing ? (
-                <ActivityIndicator size="small" color="#000" />
-              ) : (
-                <Icon name="camera" size={30} color="#000" />
-              )}
-            </View>
-          </TouchableOpacity>
-
-        </View>
-
-
-        {/* Simple Attendance Camera Status */}
-        <View style={internalCameraStyles.statusIndicator}>
-          <Text style={internalCameraStyles.statusText}>
-            📸 Camera sẵn sàng - Chụp ảnh để chấm công đơn giản
-          </Text>
-          {isCapturing && (
-            <Text style={internalCameraStyles.capturingText}>
-              Đang chụp ảnh...
-            </Text>
-          )}
-        </View>
-
-        {!cameraReady && (
-          <View style={internalCameraStyles.loadingOverlay}>
-            <ActivityIndicator size="large" color="#fff" />
-            <Text style={internalCameraStyles.loadingText}>Đang khởi động camera...</Text>
-          </View>
-        )}
-
-        {isCapturing && (
-          <View style={internalCameraStyles.capturingOverlay}>
-            <ActivityIndicator size="large" color="#fff" />
-            <Text style={internalCameraStyles.loadingText}>Đang chụp ảnh...</Text>
-          </View>
-        )}
-      </CameraView>
-
-      {capturedImage && (
-        <View style={internalCameraStyles.previewContainer}>
-          <Image source={{ uri: capturedImage }} style={internalCameraStyles.previewImage} />
-          <Text style={internalCameraStyles.previewText}>Ảnh đã chụp</Text>
-        </View>
-      )}
-    </View>
-  );
-};
 
 const internalCameraStyles = StyleSheet.create({
  container: { 
@@ -402,6 +240,9 @@ export default function CheckInScreen({ route }) {
   const [selectedShift, setSelectedShift] = useState(null);
   const [showShiftModal, setShowShiftModal] = useState(false);
   
+  // Watch ID để clear khi unmount
+  const watchIdRef = useRef(null);
+  
   // Lấy mode từ route params (checkin hoặc checkout)
   const mode = route?.params?.mode || 'checkin';
 
@@ -556,34 +397,153 @@ export default function CheckInScreen({ route }) {
   useEffect(() => {
     const fetchLocation = async () => {
       setLocationLoading(true);
+      
+      // Kiểm tra quyền location trước
       try {
-        Geolocation.getCurrentPosition(
-          (position) => {
-            setLocation({
-              latitude: position.coords.latitude,
-              longitude: position.coords.longitude,
-              accuracy: position.coords.accuracy,
-              altitude: position.coords.altitude,
-              altitudeAccuracy: position.coords.altitudeAccuracy,
-              heading: position.coords.heading,
-              speed: position.coords.speed,
-            });
+        // Request permission trước (Android cần explicit request)
+        const requestPermission = async () => {
+          if (Geolocation.requestAuthorization) {
+            try {
+              await Geolocation.requestAuthorization();
+            } catch (permError) {
+              console.log('⚠️ Permission request error (may already be granted):', permError);
+            }
+          }
+        };
+        await requestPermission();
+      } catch (permErr) {
+        console.log('⚠️ Permission check error:', permErr);
+      }
+      
+      let retryCount = 0;
+      const maxRetries = 3;
+      
+      const tryGetLocation = () => {
+        console.log(`🔄 [GPS] Attempting to get location (attempt ${retryCount + 1}/${maxRetries})...`);
+        
+        try {
+          // Thử getCurrentPosition với timeout ngắn hơn
+          Geolocation.getCurrentPosition(
+            (position) => {
+              console.log('✅ [GPS] Location obtained:', {
+                lat: position.coords.latitude,
+                lng: position.coords.longitude,
+                accuracy: position.coords.accuracy
+              });
+              
+              setLocation({
+                latitude: position.coords.latitude,
+                longitude: position.coords.longitude,
+                accuracy: position.coords.accuracy,
+                altitude: position.coords.altitude,
+                altitudeAccuracy: position.coords.altitudeAccuracy,
+                heading: position.coords.heading,
+                speed: position.coords.speed,
+              });
+              setLocationLoading(false);
+              
+              // Sau khi có vị trí, bắt đầu watch để cập nhật liên tục
+              if (watchIdRef.current === null) {
+                console.log('📡 [GPS] Starting location watch...');
+                watchIdRef.current = Geolocation.watchPosition(
+                  (watchPosition) => {
+                    console.log('🔄 [GPS] Location updated');
+                    setLocation({
+                      latitude: watchPosition.coords.latitude,
+                      longitude: watchPosition.coords.longitude,
+                      accuracy: watchPosition.coords.accuracy,
+                      altitude: watchPosition.coords.altitude,
+                      altitudeAccuracy: watchPosition.coords.altitudeAccuracy,
+                      heading: watchPosition.coords.heading,
+                      speed: watchPosition.coords.speed,
+                    });
+                  },
+                  (watchError) => {
+                    console.warn('⚠️ [GPS] Watch error:', watchError);
+                    // Không dừng watch, chỉ log warning
+                  },
+                  {
+                    enableHighAccuracy: true,
+                    timeout: 15000,
+                    maximumAge: 5000, // Chấp nhận vị trí cũ hơn 5 giây
+                    distanceFilter: 10, // Chỉ update khi di chuyển > 10m
+                  }
+                );
+              }
+            },
+            (error) => {
+              console.error(`❌ [GPS] Error (attempt ${retryCount + 1}/${maxRetries}):`, error.code, error.message);
+              
+              // Retry nếu chưa hết số lần thử
+              if (retryCount < maxRetries - 1) {
+                retryCount++;
+                console.log(`🔄 [GPS] Retrying in 2 seconds...`);
+                setTimeout(() => {
+                  tryGetLocation();
+                }, 2000);
+              } else {
+                // Hết số lần thử, thử với cài đặt ít chính xác hơn
+                console.log('🔄 [GPS] Trying with lower accuracy settings...');
+                Geolocation.getCurrentPosition(
+                  (position) => {
+                    console.log('✅ [GPS] Location obtained with fallback settings');
+                    setLocation({
+                      latitude: position.coords.latitude,
+                      longitude: position.coords.longitude,
+                      accuracy: position.coords.accuracy,
+                      altitude: position.coords.altitude,
+                      altitudeAccuracy: position.coords.altitudeAccuracy,
+                      heading: position.coords.heading,
+                      speed: position.coords.speed,
+                    });
+                    setLocationLoading(false);
+                  },
+                  (finalError) => {
+                    console.error('❌ [GPS] Final error:', finalError);
+                    setLocationLoading(false);
+                    // Không hiển thị alert, để user có thể thử lại bằng cách quay lại màn hình
+                    console.log('⚠️ [GPS] Location unavailable. User can retry by navigating back.');
+                  },
+                  {
+                    enableHighAccuracy: false, // Thử với độ chính xác thấp hơn
+                    timeout: 10000, // Timeout ngắn hơn
+                    maximumAge: 60000, // Chấp nhận vị trí cũ hơn (60 giây)
+                  }
+                );
+              }
+            },
+            {
+              enableHighAccuracy: true,
+              timeout: 15000, // Giảm timeout xuống 15 giây
+              maximumAge: 0, // Luôn lấy vị trí mới nhất
+            }
+          );
+        } catch (err) {
+          console.error('❌ [GPS] Exception:', err);
+          if (retryCount < maxRetries - 1) {
+            retryCount++;
+            setTimeout(() => {
+              tryGetLocation();
+            }, 2000);
+          } else {
             setLocationLoading(false);
-          },
-          (error) => {
-            console.error('Error fetching location:', error);
-            Alert.alert('Lỗi', 'Không thể lấy vị trí');
-            setLocationLoading(false);
-          },
-          { enableHighAccuracy: true, timeout: 20000, maximumAge: 1000 }
-        );
-      } catch (err) {
-        console.error('Error fetching location:', err);
-        Alert.alert('Lỗi', 'Không thể lấy vị trí');
-        setLocationLoading(false);
+          }
+        }
+      };
+      
+      tryGetLocation();
+    };
+    
+    fetchLocation();
+    
+    // Cleanup: clear watch khi unmount
+    return () => {
+      if (watchIdRef.current !== null) {
+        console.log('🛑 [GPS] Clearing location watch');
+        Geolocation.clearWatch(watchIdRef.current);
+        watchIdRef.current = null;
       }
     };
-    fetchLocation();
   }, []);
 
   useEffect(() => {
@@ -626,17 +586,73 @@ export default function CheckInScreen({ route }) {
 
   const handleFaceRecognized = async (data) => {
     setIsFaceRecognitionOpen(false);
-    const { imageBase64, recognitionResult } = data;
+    const { recognitionResult } = data;
     
+    console.log('📥 [CHECKIN] Received face recognition result:', recognitionResult);
+    
+    // Check if verification was successful
     if (!recognitionResult.success) {
-      Alert.alert('Lỗi', 'Không thể nhận diện khuôn mặt');
+      Alert.alert(
+        'Lỗi', 
+        recognitionResult.message || 'Không thể xác minh khuôn mặt'
+      );
       return;
     }
 
-    console.log('✅ Face recognition successful:', recognitionResult);
+    // Check if face matches
+    if (!recognitionResult.isMatch) {
+      Alert.alert(
+        'Nhận diện thất bại',
+        recognitionResult.message || `Không nhận diện được khuôn mặt (Độ chính xác: ${(recognitionResult.confidence * 100).toFixed(1)}%)`
+      );
+      return;
+    }
+
+    // Note: Server already validates threshold (0.88 for FaceNet)
+    // Trust server's decision - if isMatch is true, confidence is acceptable
     
-    // Process check-in with face recognition
-    await processCheckIn(imageBase64, recognitionResult);
+    console.log('✅ [CHECKIN] Face verification successful:', {
+      isMatch: recognitionResult.isMatch,
+      confidence: recognitionResult.confidence,
+      employeeName: recognitionResult.employeeName,
+      attendance: recognitionResult.attendance // Check if attendance was already processed
+    });
+    
+    // Check if attendance was already processed by SimpleFaceRecognitionCamera
+    if (recognitionResult.attendance) {
+      console.log('✅ [CHECKIN] Attendance already processed by camera component');
+      setUploadStatus('success');
+      Alert.alert(
+        'Thành công',
+        `${mode === 'checkin' ? 'Check-in' : 'Check-out'} thành công!\nNhận diện: ${(recognitionResult.confidence * 100).toFixed(1)}%\nThời gian: ${new Date().toLocaleString('vi-VN')}`,
+        [
+          {
+            text: 'OK',
+            onPress: async () => {
+              try {
+                const today = new Date().toDateString();
+                const newStatus = mode === 'checkin' ? true : false;
+                const checkinData = {
+                  checkedIn: newStatus,
+                  timestamp: new Date().toISOString(),
+                  checkInTime: mode === 'checkin' ? new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', hour12: false }) : null,
+                  checkOutTime: mode === 'checkout' ? new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', hour12: false }) : null
+                };
+                await AsyncStorage.setItem(`checkin_${today}`, JSON.stringify(checkinData));
+                navigation.replace('(tabs)');
+              } catch {
+                navigation.navigate('(tabs)');
+              }
+            }
+          }
+        ]
+      );
+      return;
+    }
+    
+    // If attendance not processed yet, process it here (fallback)
+    console.log('📤 [CHECKIN] Processing check-in via checkin.js (fallback)...');
+    await processCheckInNoImage(recognitionResult);
   };
 
   const handlePictureTaken = async (photo) => {
@@ -887,6 +903,132 @@ export default function CheckInScreen({ route }) {
     }
   };
 
+  const processCheckInNoImage = async (recognitionResult) => {
+    try {
+      console.log('Bắt đầu chấm công (không ảnh)...');
+
+      // Get current datetime in local timezone (GMT+7 for Vietnam)
+      // Format as local datetime string WITHOUT timezone (YYYY-MM-DDTHH:mm:ss)
+      // Server will treat this as Vietnam time (GMT+7) and convert to UTC for storage
+      const now = new Date();
+      const year = now.getFullYear();
+      const month = String(now.getMonth() + 1).padStart(2, '0');
+      const day = String(now.getDate()).padStart(2, '0');
+      const hours = String(now.getHours()).padStart(2, '0');
+      const minutes = String(now.getMinutes()).padStart(2, '0');
+      const seconds = String(now.getSeconds()).padStart(2, '0');
+      // Format WITHOUT timezone - server will parse as Unspecified and treat as Vietnam time
+      const currentDateTime = `${year}-${month}-${day}T${hours}:${minutes}:${seconds}`;
+      const faceInfo = recognitionResult ? ` - Face Recognition: ${recognitionResult.employeeName} (Confidence: ${(recognitionResult.confidence * 100).toFixed(1)}%)` : '';
+
+      // Generate unique verification token to prevent replay attacks
+      const verificationToken = `${user?.id}_${Date.now()}_${Math.random().toString(36).substring(2, 15)}`;
+      // For VerificationTimestamp, use UTC ISO string since server compares with UTC
+      const verificationTimestamp = now.toISOString();
+      
+      const data = mode === 'checkin' ? {
+        // Use PascalCase to match backend DTO (C# model binding handles camelCase, but PascalCase is safer)
+        EmployeeId: user?.id || 'unknown-user',
+        CheckInDateTime: currentDateTime,
+        Latitude: location?.latitude || 0,
+        Longitude: location?.longitude || 0,
+        Location: activeMachineName || 'Unknown Location',
+        AttendanceMachineId: 2,
+        Notes: `Check-in from mobile app - Ca: ${selectedShift?.shiftName || 'Chưa chọn ca'}${faceInfo}`,
+        // Required face verification fields (PascalCase)
+        MatchedFaceId: recognitionResult?.matchedFaceId || '',
+        MatchConfidence: recognitionResult?.confidence || 0,
+        // Required security fields (PascalCase)
+        VerificationTimestamp: verificationTimestamp,
+        VerificationToken: verificationToken,
+      } : {
+        EmployeeId: user?.id || 'unknown-user',
+        CheckOutDateTime: currentDateTime,
+        Latitude: location?.latitude || 0,
+        Longitude: location?.longitude || 0,
+        Location: activeMachineName || 'Unknown Location',
+        Notes: `Check-out from mobile app - Ca: ${selectedShift?.shiftName || 'Chưa chọn ca'}${faceInfo}`,
+      };
+
+      if (!user?.id) throw new Error('Vui lòng đăng nhập để chấm công');
+      if (!selectedShift) throw new Error('Vui lòng chọn ca làm việc trước khi chấm công');
+
+      // Ensure api is available
+      if (typeof api === 'undefined' || !api || !api.post) {
+        console.error('❌ [CHECKIN] API is not available');
+        throw new Error('API service is not available');
+      }
+
+      const endpoint = mode === 'checkin' ? '/Attendance/checkin-noimage' : '/Attendance/checkout-noimage';
+      console.log('📤 [CHECKIN] Calling API:', endpoint);
+      console.log('📦 [CHECKIN] Request data:', {
+        EmployeeId: data.EmployeeId,
+        MatchedFaceId: data.MatchedFaceId,
+        MatchConfidence: data.MatchConfidence,
+        VerificationTimestamp: data.VerificationTimestamp,
+        VerificationToken: data.VerificationToken ? `${data.VerificationToken.substring(0, 20)}...` : 'missing'
+      });
+      console.log('📦 [CHECKIN] Full request body keys:', Object.keys(data));
+      
+      const response = await api.post(endpoint, data);
+
+      if (response.data?.success) {
+        setUploadStatus('success');
+        Alert.alert(
+          'Thành công',
+          `${mode === 'checkin' ? 'Check-in' : 'Check-out'} thành công!\nThời gian: ${new Date().toLocaleString('vi-VN')}`,
+          [
+            {
+              text: 'OK',
+              onPress: () => {
+                setTimeout(async () => {
+                  setCapturedImage(null);
+                  setUploadStatus(null);
+                  try {
+                    const today = new Date().toDateString();
+                    const newStatus = mode === 'checkin' ? true : false;
+                    const checkinData = {
+                      checkedIn: newStatus,
+                      timestamp: new Date().toISOString(),
+                      checkInTime: mode === 'checkin' ? new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', hour12: false }) : null,
+                      checkOutTime: mode === 'checkout' ? new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', hour12: false }) : null
+                    };
+                    await AsyncStorage.setItem(`checkin_${today}`, JSON.stringify(checkinData));
+                  } catch {}
+                  try {
+                    navigation.replace('(tabs)');
+                  } catch {
+                    navigation.navigate('(tabs)');
+                  }
+                }, 1000);
+              }
+            }
+          ]
+        );
+      } else {
+        setUploadStatus('error');
+        Alert.alert('Lỗi', response.data?.message || 'Không thể chấm công');
+      }
+    } catch (error) {
+      console.error('❌ [CHECKIN] Check-in No Image Error:', error);
+      console.error('❌ [CHECKIN] Error response:', error.response?.data);
+      console.error('❌ [CHECKIN] Error status:', error.response?.status);
+      console.error('❌ [CHECKIN] Error message:', error.message);
+      
+      setUploadStatus('error');
+      const errorMessage = error.response?.data?.message || error.response?.data?.Message || error.message || 'Không thể chấm công';
+      
+      // Log ModelState errors if available
+      if (error.response?.data) {
+        console.error('❌ [CHECKIN] ModelState errors:', JSON.stringify(error.response.data, null, 2));
+      }
+      
+      Alert.alert('Lỗi', errorMessage);
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
 
   const renderWorkshiftItem = ({ item }) => (
     <View style={styles.shiftItem}>
@@ -919,8 +1061,8 @@ export default function CheckInScreen({ route }) {
             </View>
           </View>
           <View style={styles.userInfo}>
-            <Text style={styles.userName}>Nguyễn Trần Trí Tâm</Text>
-            <Text style={styles.userRole}>Nhân viên</Text>
+            <Text style={styles.userName}>{user?.fullName || 'Người dùng'}</Text>
+            <Text style={styles.userRole}>{user?.role || 'Nhân viên'}</Text>
           </View>
         </View>
       </View>
@@ -933,17 +1075,16 @@ export default function CheckInScreen({ route }) {
           </View>
         ) : location ? (
           <View style={styles.mapContainer}>
-            <MapPlaceholder
+            <SimpleMapView
               latitude={location.latitude}
               longitude={location.longitude}
-              markers={machines.map((machine, index) => ({
+              markers={machines.map((machine) => ({
                 latitude: parseFloat(machine.latitude),
                 longitude: parseFloat(machine.longitude),
                 title: machine.attendanceMachineName,
                 color: machine.attendanceMachineName === activeMachineName ? 'green' : 'red'
               }))}
               style={styles.mapImg}
-              activeMachineName={activeMachineName}
             />
           </View>
         ) : (
@@ -1039,6 +1180,11 @@ export default function CheckInScreen({ route }) {
               const isCurrentTime = currentTimeShifts.some(s => s.id === shift.id);
               const isSelected = selectedShift?.id === shift.id;
               
+              const todayDetail = shift.shiftDetails?.find(detail => {
+                const dayOfWeek = getDayOfWeekNumber(detail.dayOfWeek);
+                return dayOfWeek === now.getDay();
+              });
+
               return (
                 <TouchableOpacity
                   key={shift.id}
@@ -1048,54 +1194,60 @@ export default function CheckInScreen({ route }) {
                     isCurrentTime && !isSelected && styles.shiftItemCurrentTime
                   ]}
                   onPress={() => setSelectedShift(shift)}
+                  activeOpacity={0.7}
                 >
-                  <View style={styles.shiftInfo}>
-                    <View style={styles.shiftHeader}>
-                      <Text style={[
-                        styles.shiftName,
-                        isSelected && styles.shiftNameSelected,
-                        isCurrentTime && !isSelected && styles.shiftNameCurrentTime
-                      ]}>
-                        {shift.shiftName}
-                      </Text>
-                      {isCurrentTime && (
-                        <View style={styles.currentTimeBadge}>
-                          <Text style={styles.currentTimeText}>Hiện tại</Text>
-                        </View>
-                      )}
+                  <View style={styles.shiftLeftContent}>
+                    <View style={styles.shiftIconContainer}>
+                      <Icon 
+                        name="clock-outline" 
+                        size={22} 
+                        color={isSelected ? '#10b981' : isCurrentTime ? '#2563eb' : '#64748b'} 
+                      />
                     </View>
-                    {shift.shiftDetails && shift.shiftDetails
-                      .filter(detail => {
-                        const dayOfWeek = getDayOfWeekNumber(detail.dayOfWeek);
-                        return dayOfWeek === now.getDay();
-                      })
-                      .map((detail, index) => (
-                        <Text key={index} style={[
-                          styles.shiftDetail,
-                          isSelected && styles.shiftDetailSelected,
-                          isCurrentTime && !isSelected && styles.shiftDetailCurrentTime
+                    <View style={styles.shiftInfo}>
+                      <View style={styles.shiftHeader}>
+                        <Text style={[
+                          styles.shiftName,
+                          isSelected && styles.shiftNameSelected,
+                          isCurrentTime && !isSelected && styles.shiftNameCurrentTime
                         ]}>
-                          {detail.startTime.substring(0, 5)} - {detail.endTime.substring(0, 5)}
+                          {shift.shiftName}
                         </Text>
-                      ))}
-                    {/* Hiển thị tất cả ngày trong tuần nếu không có ca nào phù hợp với ngày hiện tại */}
-                    {shift.shiftDetails && shift.shiftDetails
-                      .filter(detail => {
-                        const dayOfWeek = getDayOfWeekNumber(detail.dayOfWeek);
-                        return dayOfWeek !== now.getDay();
-                      })
-                      .map((detail, index) => (
-                        <Text key={`all-${index}`} style={[
+                        {isCurrentTime && (
+                          <View style={styles.currentTimeBadge}>
+                            <Icon name="pulse" size={12} color="#fff" style={{ marginRight: 4 }} />
+                            <Text style={styles.currentTimeText}>Hiện tại</Text>
+                          </View>
+                        )}
+                      </View>
+                      {/* Chỉ hiển thị giờ làm của thứ hiện tại */}
+                      {todayDetail ? (
+                        <View style={styles.shiftTimeContainer}>
+                          <Text style={[
+                            styles.shiftDetail,
+                            isSelected && styles.shiftDetailSelected,
+                            isCurrentTime && !isSelected && styles.shiftDetailCurrentTime
+                          ]}>
+                            {todayDetail.startTime.substring(0, 5)} - {todayDetail.endTime.substring(0, 5)}
+                          </Text>
+                        </View>
+                      ) : (
+                        <Text style={[
                           styles.shiftDetail,
                           styles.shiftDetailOtherDay
                         ]}>
-                          {detail.dayOfWeek}: {detail.startTime.substring(0, 5)} - {detail.endTime.substring(0, 5)}
+                          Không có lịch cho hôm nay
                         </Text>
-                      ))}
+                      )}
+                    </View>
                   </View>
-                  {isSelected && (
-                    <Icon name="check-circle" size={24} color="#10b981" />
-                  )}
+                  <View style={styles.shiftRightContent}>
+                    {isSelected && (
+                      <View style={styles.checkIconContainer}>
+                        <Icon name="check-circle" size={28} color="#10b981" />
+                      </View>
+                    )}
+                  </View>
                 </TouchableOpacity>
               );
             })}
@@ -1121,21 +1273,6 @@ export default function CheckInScreen({ route }) {
         
         <View style={styles.buttonContainer}>
           <TouchableOpacity 
-            style={[styles.cameraBtn, isCheckInDisabled && styles.cameraBtnDisabled]} 
-            disabled={isCheckInDisabled} 
-            onPress={() => setIsCameraOpen(true)}
-            activeOpacity={0.8}
-          >
-            <View style={[
-              styles.cameraBtnGradient,
-              { backgroundColor: isCheckInDisabled ? '#94a3b8' : '#3498db' }
-            ]}>
-              <Icon name="camera" size={32} color="#fff" />
-              <Text style={styles.cameraBtnText}>{mode === 'checkin' ? 'Chấm công vào' : 'Chấm công ra'}</Text>
-            </View>
-          </TouchableOpacity>
-
-          <TouchableOpacity 
             style={[styles.faceBtn, isCheckInDisabled && styles.faceBtnDisabled]} 
             disabled={isCheckInDisabled} 
             onPress={() => setIsFaceRecognitionOpen(true)}
@@ -1153,12 +1290,7 @@ export default function CheckInScreen({ route }) {
       </View>
         </ScrollView>
 
-      <Modal animationType="slide" transparent={false} visible={isCameraOpen} onRequestClose={() => setIsCameraOpen(false)}>
-        <InternalCameraCheckIn 
-          onPictureTaken={handlePictureTaken} 
-          onClose={() => setIsCameraOpen(false)} 
-        />
-      </Modal>
+      {/* Nếu cần camera chấm công thông thường, hãy chuyển sang vision-camera. Nếu không, giữ chỉ SimpleFaceRecognitionCamera */}
 
       <Modal animationType="slide" transparent={false} visible={isFaceRecognitionOpen} onRequestClose={() => setIsFaceRecognitionOpen(false)}>
         <SimpleFaceRecognitionCamera 
@@ -1244,8 +1376,10 @@ const styles = StyleSheet.create({
   },
   mapContainer: {
     position: 'relative',
+    width: '100%',
+    height: 180,
   },
-  mapImg: { width: '100%', height: 140 },
+  mapImg: { width: '100%', height: 180 },
   mapOverlay: {
     position: 'absolute',
     bottom: 0,
@@ -1450,13 +1584,12 @@ const styles = StyleSheet.create({
   },
   buttonContainer: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    justifyContent: 'center',
     alignItems: 'center',
     width: '100%',
-    gap: 12,
   },
   faceBtn: { 
-    flex: 1,
+    width: '100%',
     borderRadius: 24,
     shadowColor: '#10b981',
     shadowOffset: { width: 0, height: 8 },
@@ -1526,89 +1659,145 @@ const styles = StyleSheet.create({
     elevation: 4,
   },
   shiftItem: {
-    backgroundColor: '#fff',
-    padding: 8,
-    marginVertical: 2,
-    borderRadius: 6,
+    backgroundColor: '#ffffff',
+    padding: 16,
+    marginVertical: 6,
+    borderRadius: 12,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    borderWidth: 1,
-    borderColor: 'transparent',
+    borderWidth: 2,
+    borderColor: '#e2e8f0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 3,
+    elevation: 2,
   },
   shiftItemSelected: {
     borderColor: '#10b981',
     backgroundColor: '#f0fdf4',
+    shadowColor: '#10b981',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  shiftLeftContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  shiftIconContainer: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#f1f5f9',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
   },
   shiftInfo: {
     flex: 1,
   },
   shiftName: {
-    fontWeight: 'bold',
-    fontSize: 14,
-    color: '#333',
+    fontWeight: '600',
+    fontSize: 15,
+    color: '#1e293b',
+    letterSpacing: 0.2,
   },
   shiftNameSelected: {
-    color: '#10b981',
+    color: '#059669',
+    fontWeight: '700',
+  },
+  shiftTimeContainer: {
+    marginTop: 4,
   },
   shiftDetail: {
-    fontSize: 12,
-    color: '#666',
-    marginTop: 2,
+    fontSize: 13,
+    color: '#64748b',
+    fontWeight: '500',
+    letterSpacing: 0.3,
   },
   shiftDetailSelected: {
-    color: '#059669',
+    color: '#047857',
+    fontWeight: '600',
   },
   shiftSelectionBox: {
     marginHorizontal: 16,
-    marginTop: 12,
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 12,
+    marginTop: 16,
+    backgroundColor: '#ffffff',
+    borderRadius: 16,
+    padding: 16,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 3,
+    borderWidth: 1,
+    borderColor: '#f1f5f9',
   },
   shiftSelectionTitle: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#2c3e50',
-    marginBottom: 4,
+    fontSize: 17,
+    fontWeight: '700',
+    color: '#1e293b',
+    marginBottom: 6,
+    letterSpacing: 0.3,
   },
   shiftSelectionSubtitle: {
-    fontSize: 12,
-    color: '#3498db',
-    marginBottom: 8,
+    fontSize: 13,
+    color: '#64748b',
+    marginBottom: 12,
     fontWeight: '500',
+    letterSpacing: 0.2,
   },
   shiftHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 2,
+    marginBottom: 4,
   },
   currentTimeBadge: {
-    backgroundColor: '#3498db',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 12,
+    backgroundColor: '#2563eb',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    shadowColor: '#2563eb',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.3,
+    shadowRadius: 2,
+    elevation: 2,
   },
   currentTimeText: {
-    fontSize: 12,
+    fontSize: 11,
     color: '#fff',
-    fontWeight: 'bold',
+    fontWeight: '700',
+    letterSpacing: 0.3,
+  },
+  shiftRightContent: {
+    marginLeft: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  checkIconContainer: {
+    width: 28,
+    height: 28,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   shiftItemCurrentTime: {
-    borderColor: '#3498db',
-    backgroundColor: '#e3f2fd',
+    borderColor: '#2563eb',
+    backgroundColor: '#eff6ff',
   },
   shiftNameCurrentTime: {
-    color: '#3498db',
+    color: '#1e40af',
+    fontWeight: '700',
   },
   shiftDetailCurrentTime: {
-    color: '#2980b9',
+    color: '#1d4ed8',
+    fontWeight: '600',
   },
   shiftDetailOtherDay: {
     color: '#94a3b8',
@@ -1618,8 +1807,8 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   shiftScrollContainer: {
-    maxHeight: 120, // Chiều cao tối đa cho 2 ca (mỗi ca ~50px + margin)
-    marginTop: 8,
+    maxHeight: 200,
+    marginTop: 4,
   },
   noShiftContainer: {
     alignItems: 'center',

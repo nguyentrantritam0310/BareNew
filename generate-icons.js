@@ -85,3 +85,5 @@ Object.entries(iconSizes).forEach(([folder, size]) => {
 });
 
 console.log('All icons generated successfully!');
+
+

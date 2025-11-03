@@ -1,6 +1,6 @@
 module.exports = {
   presets: ['module:@react-native/babel-preset'],
   plugins: [
-    // 'react-native-reanimated/plugin', // Temporarily disabled due to Metro error
+    'react-native-reanimated/plugin',
   ],
 };

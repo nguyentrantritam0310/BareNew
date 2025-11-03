@@ -1,0 +1,31 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="blueGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#4A90E2;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#2E5BBA;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  
+  <!-- Background circle -->
+  <circle cx="256" cy="256" r="240" fill="url(#blueGradient)" stroke="#1E3A8A" stroke-width="8"/>
+  
+  <!-- Hard hat -->
+  <g transform="translate(256, 256)">
+    <!-- Hard hat dome -->
+    <ellipse cx="0" cy="-20" rx="80" ry="60" fill="white" stroke="#E5E7EB" stroke-width="2"/>
+    
+    <!-- Hard hat ridges -->
+    <line x1="-60" y1="-40" x2="60" y2="-40" stroke="#E5E7EB" stroke-width="3"/>
+    <line x1="-50" y1="-20" x2="50" y2="-20" stroke="#E5E7EB" stroke-width="3"/>
+    <line x1="-40" y1="0" x2="40" y2="0" stroke="#E5E7EB" stroke-width="3"/>
+    
+    <!-- Hard hat brim -->
+    <ellipse cx="0" cy="40" rx="90" ry="25" fill="white" stroke="#E5E7EB" stroke-width="2"/>
+    
+    <!-- Hard hat strap -->
+    <path d="M -70 20 Q -80 30 -70 40 Q -60 50 -50 40 Q -40 30 -50 20" fill="none" stroke="#E5E7EB" stroke-width="4"/>
+    <path d="M 70 20 Q 80 30 70 40 Q 60 50 50 40 Q 40 30 50 20" fill="none" stroke="#E5E7EB" stroke-width="4"/>
+  </g>
+</svg>
+
+

@@ -65,8 +65,8 @@ const LoginScreen = () => {
           ]
         );
       } else {
-        // Navigate to main app - go to Home screen instead of Attendance
-        navigation.navigate('(tabs)');
+        // Navigate to main app - go to Home screen
+        navigation.navigate('Home');
       }
     }
   };

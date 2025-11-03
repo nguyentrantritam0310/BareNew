@@ -13,17 +13,22 @@ import {
   Dimensions,
 } from 'react-native';
 import { Camera, useCameraDevices } from 'react-native-vision-camera';
-// import MLKitFaceDetection from '@react-native-ml-kit/face-detection';
-// import * as faceapi from 'face-api.js';
+import FaceDetection from '@react-native-ml-kit/face-detection';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+
+// Debug ML Kit import
+console.log('ML Kit FaceDetection object:', typeof FaceDetection);
 import { useAuth } from '../contexts/AuthContext';
 import CustomHeader from '../components/CustomHeader';
 import { useNavigation } from '@react-navigation/native';
 import api from '../api';
+import faceNetService from '../services/faceNetService';
+import RNFS from 'react-native-fs';
 
 const { width: screenWidth } = Dimensions.get('window');
 
 const FaceRegistrationScreen = () => {
+  const ENABLE_SIMULATED_DETECTION = false;
   const { user } = useAuth();
   const navigation = useNavigation();
   const devices = useCameraDevices();
@@ -40,26 +45,115 @@ const FaceRegistrationScreen = () => {
   const [faceDetected, setFaceDetected] = useState(false);
   const [faceData, setFaceData] = useState(null);
   const [canCapture, setCanCapture] = useState(false);
+  
+  // Debug state changes
+  useEffect(() => {
+    console.log('🔄 State changed - faceDetected:', faceDetected, 'canCapture:', canCapture);
+  }, [faceDetected, canCapture]);
+  
+  useEffect(() => {
+    console.log('🔄 Face data changed:', faceData);
+  }, [faceData]);
+  
+  // Debug camera state changes
+  useEffect(() => {
+    console.log('📷 Camera state changed - isCameraOpen:', isCameraOpen);
+    console.log('📷 Camera state changed - hasPermission:', hasPermission);
+    console.log('📷 Camera state changed - device:', !!device);
+  }, [isCameraOpen, hasPermission, device]);
   const [autoCaptureEnabled, setAutoCaptureEnabled] = useState(false);
+  const [autoRegisterEnabled, setAutoRegisterEnabled] = useState(false);
+  const [lastRegistrationTime, setLastRegistrationTime] = useState(0);
+   const [debugExpanded, setDebugExpanded] = useState(false);
+  // Multi-pose registration state
+  const [poseStep, setPoseStep] = useState(0); // 0: thẳng, 1: quay trái, 2: quay phải, 3: ngước lên
+  const [collectedEmbeddings, setCollectedEmbeddings] = useState([]); // array of float[128]
+  const [collectedQualities, setCollectedQualities] = useState([]); // quality per pose
+  const [isMultiPoseActive, setIsMultiPoseActive] = useState(true); // bật mặc định theo yêu cầu
+  const isPoseCollectingRef = useRef(false); // tránh ghi nhận lặp lại 1 pose
+  const lastPoseStepRef = useRef(-1);
+  const poseStepRef = useRef(0);
+
+  useEffect(() => {
+    poseStepRef.current = poseStep;
+  }, [poseStep]);
+
+  // Load FaceNet model on component mount
+  useEffect(() => {
+    const loadFaceNetModel = async () => {
+      try {
+        console.log('🔄 Attempting to load FaceNet model...');
+        const loaded = await faceNetService.loadModel();
+        if (loaded) {
+          console.log('✅ FaceNet model loaded successfully. Will use 512-dim embeddings.');
+        } else {
+          console.log('⚠️ FaceNet model not available. Falling back to custom 256-dim embeddings.');
+        }
+      } catch (error) {
+        console.error('❌ Error loading FaceNet model:', error);
+        console.log('⚠️ Will use custom embedding fallback');
+      }
+    };
+    loadFaceNetModel();
+  }, []);
+
+  const getPoseTitle = (step) => {
+    switch (step) {
+      case 0: return 'Bước 1/4: Nhìn thẳng';
+      case 1: return 'Bước 2/4: Quay trái nhẹ';
+      case 2: return 'Bước 3/4: Quay phải nhẹ';
+      case 3: return 'Bước 4/4: Ngước nhẹ';
+      default: return '';
+    }
+  };
+  const getPoseHint = (step) => {
+    switch (step) {
+      case 0: return 'Giữ đầu thẳng, nhìn trực diện vào camera';
+      case 1: return 'Quay đầu nhẹ sang trái, vẫn giữ trong khung';
+      case 2: return 'Quay đầu nhẹ sang phải, vẫn giữ trong khung';
+      case 3: return 'Ngước đầu nhẹ lên, không vượt quá khung';
+      default: return '';
+    }
+  };
   
   const cameraRef = useRef(null);
 
-  // Face detection constants
-  const MIN_FACE_SIZE = 0.1; // Minimum face size relative to frame
-  const MAX_HEAD_ANGLE = 15; // Maximum head rotation angle in degrees
+// Face detection constants
+const MIN_FACE_SIZE = 0.01; // Minimum face size relative to frame (very lenient)
+const MAX_HEAD_ANGLE = 45; // Maximum head rotation angle in degrees (very lenient)
 
   useEffect(() => {
     loadFaceRegistrations();
-    checkCameraPermission();
+    // Delay permission check to ensure app is fully launched
+    // Request permission only when needed (when opening camera)
+    // checkCameraPermission(); // Removed - will request when opening camera
   }, []);
 
   const checkCameraPermission = async () => {
     try {
-      const permission = await Camera.requestCameraPermission();
-      setHasPermission(permission === 'granted');
+      // Check current permission status first
+      const permissionStatus = await Camera.getCameraPermissionStatus();
+      
+      if (permissionStatus === 'granted') {
+        setHasPermission(true);
+        return true;
+      }
+      
+      if (permissionStatus === 'not-determined') {
+        // Request permission only if not determined yet
+        const permission = await Camera.requestCameraPermission();
+        const granted = permission === 'granted';
+        setHasPermission(granted);
+        return granted;
+      }
+      
+      // Permission denied or restricted
+      setHasPermission(false);
+      return false;
     } catch (error) {
       console.error('Camera permission error:', error);
       setHasPermission(false);
+      return false;
     }
   };
 
@@ -70,8 +164,22 @@ const FaceRegistrationScreen = () => {
       setFaceRegistrations(response.data);
     } catch (error) {
       console.error('Error loading face registrations:', error);
-      // Don't show alert for 404, just log it
-      if (error.response?.status !== 404) {
+      
+      if (error.response?.status === 401) {
+        Alert.alert(
+          'Phiên đăng nhập hết hạn', 
+          'Vui lòng đăng nhập lại để tiếp tục sử dụng',
+          [
+            {
+              text: 'Đăng nhập lại',
+              onPress: () => {
+                // Navigate to login screen
+                navigation.navigate('Login');
+              }
+            }
+          ]
+        );
+      } else if (error.response?.status !== 404) {
         Alert.alert('Lỗi', 'Không thể tải danh sách khuôn mặt đã đăng ký');
       }
     } finally {
@@ -182,21 +290,81 @@ const FaceRegistrationScreen = () => {
   const isGoodFaceQuality = (face) => {
     if (!face) return false;
     
-    const { boundingBox, headEulerAngleX, headEulerAngleY, headEulerAngleZ } = face;
+    const { bounds, headEulerAngleX, headEulerAngleY, headEulerAngleZ } = face;
     
-    // Check face size (not too small)
-    const faceSize = boundingBox.width * boundingBox.height;
-    if (faceSize < MIN_FACE_SIZE) return false;
+    console.log('🔍 Face quality validation - bounds:', bounds);
+    console.log('🔍 Face quality validation - angles:', { headEulerAngleX, headEulerAngleY, headEulerAngleZ });
     
-    // Check head rotation angles
-    if (Math.abs(headEulerAngleX) > MAX_HEAD_ANGLE) return false; // Up/down tilt
-    if (Math.abs(headEulerAngleY) > MAX_HEAD_ANGLE) return false; // Left/right tilt
-    if (Math.abs(headEulerAngleZ) > MAX_HEAD_ANGLE) return false; // Left/right rotation
+    // Check if bounds exist and are valid
+    if (!bounds || typeof bounds.x !== 'number' || typeof bounds.y !== 'number' || 
+        typeof bounds.width !== 'number' || typeof bounds.height !== 'number') {
+      console.log('❌ Invalid bounds structure');
+      return false;
+    }
     
-    // Check face position in frame
-    if (boundingBox.x < 0.1 || boundingBox.x > 0.9) return false;
-    if (boundingBox.y < 0.1 || boundingBox.y > 0.9) return false;
+    // Check face size (normalize to screen dimensions for comparison)
+    const faceArea = bounds.width * bounds.height;
+    const screenArea = screenWidth * screenWidth; // Assuming square aspect ratio
+    const normalizedFaceSize = faceArea / screenArea;
     
+    console.log('🔍 Face size check - area:', faceArea, 'normalized:', normalizedFaceSize, 'min required:', MIN_FACE_SIZE);
+    
+    if (normalizedFaceSize < MIN_FACE_SIZE) {
+      console.log('❌ Face too small');
+      return false;
+    }
+    
+    // Check head rotation angles (more lenient)
+    const maxAngle = MAX_HEAD_ANGLE;
+    console.log('🔍 Angle checks - X:', Math.abs(headEulerAngleX), 'Y:', Math.abs(headEulerAngleY), 'Z:', Math.abs(headEulerAngleZ), 'max:', maxAngle);
+    
+    if (Math.abs(headEulerAngleX) > maxAngle) {
+      console.log('❌ Head tilt X too much:', headEulerAngleX);
+      return false;
+    }
+    if (Math.abs(headEulerAngleY) > maxAngle) {
+      console.log('❌ Head tilt Y too much:', headEulerAngleY);
+      return false;
+    }
+    if (Math.abs(headEulerAngleZ) > maxAngle) {
+      console.log('❌ Head rotation Z too much:', headEulerAngleZ);
+      return false;
+    }
+    
+    // Check face position in frame (normalize coordinates)
+    const normalizedX = bounds.x / screenWidth;
+    const normalizedY = bounds.y / screenWidth;
+    const normalizedWidth = bounds.width / screenWidth;
+    const normalizedHeight = bounds.height / screenWidth;
+    
+    console.log('🔍 Position checks - normalized X:', normalizedX, 'Y:', normalizedY, 'W:', normalizedWidth, 'H:', normalizedHeight);
+    
+    // More lenient position checks - face should be mostly in frame
+    if (normalizedX < -0.3 || normalizedX > 1.5) {
+      console.log('❌ Face X position out of range:', normalizedX);
+      return false;
+    }
+    if (normalizedY < -0.3 || normalizedY > 2.0) {
+      console.log('❌ Face Y position out of range:', normalizedY);
+      return false;
+    }
+    
+    // Check if face is reasonably centered (not too far to edges)
+    const centerX = normalizedX + normalizedWidth / 2;
+    const centerY = normalizedY + normalizedHeight / 2;
+    
+    console.log('🔍 Center position - X:', centerX, 'Y:', centerY);
+    
+    if (centerX < -0.5 || centerX > 2.0) { // Very lenient: 0.0→-0.5, 1.5→2.0
+      console.log('❌ Face center X not well positioned:', centerX);
+      return false;
+    }
+    if (centerY < -0.5 || centerY > 3.0) { // Very lenient: 0.0→-0.5, 2.0→3.0
+      console.log('❌ Face center Y not well positioned:', centerY);
+      return false;
+    }
+    
+    console.log('✅ Face quality check passed!');
     return true;
   };
 
@@ -204,47 +372,99 @@ const FaceRegistrationScreen = () => {
   const extractFaceFeatures = (face) => {
     if (!face) return null;
     
+    // Handle landmarks - support both position object and direct x,y
+    const landmarks = face.landmarks ? face.landmarks.map(landmark => ({
+      type: landmark.type || landmark.name || 'unknown',
+      x: landmark.position?.x || landmark.x || 0,
+      y: landmark.position?.y || landmark.y || 0,
+    })) : [];
+    
+    // Handle contours - support both points array and direct points
+    const contours = face.contours ? face.contours.map(contour => ({
+      type: contour.type || contour.name || 'unknown',
+      points: contour.points ? contour.points.map(point => ({
+        x: point.x || 0,
+        y: point.y || 0,
+      })) : [],
+    })) : [];
+    
     return {
-      boundingBox: face.boundingBox,
-      landmarks: face.landmarks,
-      contours: face.contours,
-      headEulerAngleX: face.headEulerAngleX,
-      headEulerAngleY: face.headEulerAngleY,
-      headEulerAngleZ: face.headEulerAngleZ,
-      leftEyeOpenProbability: face.leftEyeOpenProbability,
-      rightEyeOpenProbability: face.rightEyeOpenProbability,
-      smilingProbability: face.smilingProbability,
+      bounds: {
+        x: face.bounds?.x || 0,
+        y: face.bounds?.y || 0,
+        width: face.bounds?.width || 0,
+        height: face.bounds?.height || 0,
+      },
+      landmarks: landmarks,
+      contours: contours,
+      headEulerAngles: {
+        x: face.headEulerAngleX || face.headEulerAngles?.x || 0,
+        y: face.headEulerAngleY || face.headEulerAngles?.y || 0,
+        z: face.headEulerAngleZ || face.headEulerAngles?.z || 0,
+      },
+      probabilities: {
+        leftEyeOpenProbability: face.leftEyeOpenProbability !== undefined && face.leftEyeOpenProbability !== null 
+          ? face.leftEyeOpenProbability 
+          : (face.probabilities?.leftEyeOpenProbability || 0),
+        rightEyeOpenProbability: face.rightEyeOpenProbability !== undefined && face.rightEyeOpenProbability !== null 
+          ? face.rightEyeOpenProbability 
+          : (face.probabilities?.rightEyeOpenProbability || 0),
+        smilingProbability: face.smilingProbability !== undefined && face.smilingProbability !== null 
+          ? face.smilingProbability 
+          : (face.probabilities?.smilingProbability || 0),
+      },
+      trackingId: face.trackingId || face.trackingID || null,
+      confidence: face.confidence || null,
     };
   };
 
   // Calculate face quality score
-  const calculateFaceQuality = (faceFeatures) => {
+  // When isMultiPoseActive, we don't penalize head rotation angles since rotation is required for poses
+  const calculateFaceQuality = (faceFeatures, isMultiPose = false) => {
     if (!faceFeatures) return 0;
     
     let qualityScore = 100;
     
-    // Deduct points for head rotation
-    const angleX = Math.abs(faceFeatures.headEulerAngleX || 0);
-    const angleY = Math.abs(faceFeatures.headEulerAngleY || 0);
-    const angleZ = Math.abs(faceFeatures.headEulerAngleZ || 0);
-    
-    qualityScore -= (angleX + angleY + angleZ) * 2; // 2 points per degree
+    // Deduct points for head rotation - BUT NOT for multi-pose registration
+    // because rotation is intentional and required for left/right/up poses
+    if (!isMultiPose) {
+      const angleX = Math.abs(faceFeatures.headEulerAngles?.x || 0);
+      const angleY = Math.abs(faceFeatures.headEulerAngles?.y || 0);
+      const angleZ = Math.abs(faceFeatures.headEulerAngles?.z || 0);
+      
+      // Only penalize excessive rotation (>30 degrees) even in single-pose mode
+      const excessiveX = Math.max(0, angleX - 30);
+      const excessiveY = Math.max(0, angleY - 30);
+      const excessiveZ = Math.max(0, angleZ - 30);
+      qualityScore -= (excessiveX + excessiveY + excessiveZ) * 2; // 2 points per excessive degree
+    } else {
+      // For multi-pose: only penalize excessive rotation (>45 degrees)
+      const angleX = Math.abs(faceFeatures.headEulerAngles?.x || 0);
+      const angleY = Math.abs(faceFeatures.headEulerAngles?.y || 0);
+      const angleZ = Math.abs(faceFeatures.headEulerAngles?.z || 0);
+      
+      // Allow up to 45 degrees for pose registration, only penalize beyond that
+      const excessiveX = Math.max(0, angleX - 45);
+      const excessiveY = Math.max(0, angleY - 45);
+      const excessiveZ = Math.max(0, angleZ - 45);
+      qualityScore -= (excessiveX + excessiveY + excessiveZ) * 2;
+    }
     
     // Deduct points for small face size
-    const faceSize = faceFeatures.boundingBox?.width * faceFeatures.boundingBox?.height || 0;
+    const faceSize = faceFeatures.bounds?.width * faceFeatures.bounds?.height || 0;
     if (faceSize < 0.2) qualityScore -= 20;
     else if (faceSize < 0.3) qualityScore -= 10;
     
     // Bonus points for good eye openness
-    const leftEyeOpen = faceFeatures.leftEyeOpenProbability || 0;
-    const rightEyeOpen = faceFeatures.rightEyeOpenProbability || 0;
+    const leftEyeOpen = faceFeatures.probabilities?.leftEyeOpenProbability || 0;
+    const rightEyeOpen = faceFeatures.probabilities?.rightEyeOpenProbability || 0;
     const avgEyeOpen = (leftEyeOpen + rightEyeOpen) / 2;
     
     if (avgEyeOpen > 0.8) qualityScore += 10;
     else if (avgEyeOpen < 0.5) qualityScore -= 15;
     
     // Bonus points for smiling (optional)
-    const smiling = faceFeatures.smilingProbability || 0;
+    const smiling = faceFeatures.probabilities?.smilingProbability || 0;
     if (smiling > 0.7) qualityScore += 5;
     
     return Math.max(0, Math.min(100, qualityScore));
@@ -265,6 +485,140 @@ const FaceRegistrationScreen = () => {
         console.log('Auto capturing face...');
         takePicture();
       }
+
+      // Multi-pose auto embedding collection (no image upload)
+      try {
+        if (isMultiPoseActive && isValidFace && face) {
+          const yaw = face.headEulerAngleY || 0; // quay trái/phải
+          const pitch = face.headEulerAngleX || 0; // ngước lên/xuống
+          // Pose rules (đơn giản, có thể tinh chỉnh):
+          const isFront = Math.abs(yaw) < 10 && Math.abs(pitch) < 12;
+          const isLeft = yaw < -6 && Math.abs(pitch) < 18; // nới lỏng yaw/pitch
+          const isRight = yaw > 6 && Math.abs(pitch) < 18; // nới lỏng yaw/pitch
+          const isUp = pitch > 10;
+
+          const targetIdx = poseStepRef.current;
+          let ok = false;
+          if (targetIdx === 0) ok = isFront;
+          else if (targetIdx === 1) ok = isLeft;
+          else if (targetIdx === 2) ok = isRight;
+          else if (targetIdx === 3) ok = isUp;
+
+          console.log(`[POSE] step=${targetIdx} yaw=${(yaw||0).toFixed(1)} pitch=${(pitch||0).toFixed(1)} front=${isFront} left=${isLeft} right=${isRight} up=${isUp} collecting=${isPoseCollectingRef.current}`);
+          if (!isLeft && targetIdx === 1) {
+            const need = (-(6 + 0.1) - (yaw||0));
+            console.log(`👉 Quay trái thêm ~${Math.max(0, need).toFixed(1)}°`);
+          }
+          if (!isRight && targetIdx === 2) {
+            const need = ((6 + 0.1) - (yaw||0));
+            console.log(`👉 Quay phải thêm ~${Math.max(0, need).toFixed(1)}°`);
+          }
+
+          if (ok) {
+            // tránh ghi nhận lặp lại cùng một bước
+            if (isPoseCollectingRef.current || lastPoseStepRef.current === targetIdx) {
+              return;
+            }
+            isPoseCollectingRef.current = true;
+            // Tính embedding (FaceNet first, fallback to custom)
+            // Note: photoPath not available in handleFaceDetected, so use custom embedding
+            const emb = computeEmbeddingFromFaceData(face);
+            if (Array.isArray(emb) && emb.length > 0) {
+              // L2 normalize
+              const n = Math.sqrt(emb.reduce((s, v) => s + v * v, 0));
+              if (isFinite(n) && n > 0) {
+                const embNorm = emb.map(v => v / n);
+                
+                // Validate user ID
+                if (!user?.id) {
+                  console.error('❌ User ID is missing');
+                  Alert.alert('Lỗi', 'Không thể xác định người dùng. Vui lòng đăng nhập lại.');
+                  isPoseCollectingRef.current = false;
+                  return;
+                }
+                
+                // Validate embedding dimension
+                if (embNorm.length !== 256 && embNorm.length !== 512) {
+                  console.error(`❌ Invalid embedding dimension: ${embNorm.length} (expected 256 or 512)`);
+                  Alert.alert('Lỗi', `Embedding không đúng định dạng (${embNorm.length} dimensions, cần 256 hoặc 512)`);
+                  isPoseCollectingRef.current = false;
+                  return;
+                }
+                
+                const q = calculateFaceQuality(extractFaceFeatures(face), true); // true = isMultiPose
+                console.log(`🧩 Gửi đăng ký pose ${targetIdx + 1}/4 (Q=${q.toFixed(0)}, ${embNorm.length} dim)`);
+                console.log(`📋 User ID: ${user.id}, Embedding length: ${embNorm.length}`);
+                
+                // Map step -> pose label
+                const poseMap = { 0: 'front', 1: 'left', 2: 'right', 3: 'up' };
+                const poseLabel = poseMap[targetIdx] || 'front';
+                const body = {
+                  employeeId: user.id,
+                  embedding: embNorm, // Already a regular array
+                  faceQualityScore: q,
+                  notes: `Pose ${poseLabel} - ${new Date().toLocaleString('vi-VN')}`,
+                  pose: poseLabel,
+                };
+                
+                console.log(`📤 Sending request body keys:`, Object.keys(body));
+                
+                api.post('/FaceRegistration/register-embedding', body).then((res) => {
+                  if (res.data?.success) {
+                    console.log(`✅ Đăng ký pose ${poseLabel} thành công`);
+                    if (targetIdx < 3) {
+                      lastPoseStepRef.current = targetIdx;
+                      setTimeout(() => {
+                        setPoseStep(prev => prev + 1);
+                        isPoseCollectingRef.current = false;
+                      }, 700);
+                    } else {
+                      // Hoàn tất 4 pose
+                      Alert.alert('Thành công', 'Đăng ký đủ 4 góc khuôn mặt!');
+                      setCollectedEmbeddings([]);
+                      setCollectedQualities([]);
+                      setPoseStep(0);
+                      setIsMultiPoseActive(false);
+                      lastPoseStepRef.current = -1;
+                      isPoseCollectingRef.current = false;
+                      loadFaceRegistrations();
+                      // Tự động đóng camera và quay về trang đăng ký
+                      setTimeout(() => {
+                        setIsCameraOpen(false);
+                      }, 500);
+                    }
+                  } else {
+                    Alert.alert('Lỗi', res.data?.message || 'Không thể đăng ký pose');
+                    isPoseCollectingRef.current = false;
+                  }
+                  }).catch((e) => {
+                  console.error('❌ Lỗi đăng ký pose:', e);
+                  console.error('❌ Error response:', e.response?.data);
+                  console.error('❌ Error status:', e.response?.status);
+                  
+                  const errorMessage = e.response?.data?.message || e.response?.data?.Message || e.message || 'Không thể đăng ký pose';
+                  Alert.alert('Lỗi', errorMessage);
+                  isPoseCollectingRef.current = false;
+                  }).finally(() => {
+                    // Watchdog: đảm bảo không kẹt cờ quá lâu
+                    setTimeout(() => {
+                      if (isPoseCollectingRef.current) {
+                        console.log('[POSE] watchdog: reset collecting flag');
+                        isPoseCollectingRef.current = false;
+                      }
+                    }, 3000);
+                  });
+              } else {
+                isPoseCollectingRef.current = false;
+              }
+            } else {
+              isPoseCollectingRef.current = false;
+            }
+          }
+        }
+      } catch (e) {
+        console.log('⚠️ Multi-pose collect error:', e?.message || e);
+        isPoseCollectingRef.current = false;
+      }
       
       console.log('Face detected:', {
         isValid: isValidFace,
@@ -282,11 +636,109 @@ const FaceRegistrationScreen = () => {
     }
   };
 
-  // Face detection using interval-based approach
+  // Normalize ML Kit face data to expected format
+  const normalizeFaceData = (mlKitFace) => {
+    if (!mlKitFace) return null;
+    
+    // Log raw ML Kit face data to understand structure
+    console.log('🔍 Raw ML Kit Face:', JSON.stringify(mlKitFace, null, 2));
+    
+    // Try different possible field names for bounds
+    let bounds = null;
+    if (mlKitFace.frame) {
+      bounds = {
+        x: mlKitFace.frame.left || mlKitFace.frame.x || 0,
+        y: mlKitFace.frame.top || mlKitFace.frame.y || 0,
+        width: mlKitFace.frame.width || 0,
+        height: mlKitFace.frame.height || 0,
+      };
+    } else if (mlKitFace.boundingBox) {
+      bounds = {
+        x: mlKitFace.boundingBox.left || mlKitFace.boundingBox.x || 0,
+        y: mlKitFace.boundingBox.top || mlKitFace.boundingBox.y || 0,
+        width: mlKitFace.boundingBox.width || 0,
+        height: mlKitFace.boundingBox.height || 0,
+      };
+    } else if (mlKitFace.bounds) {
+      bounds = {
+        x: mlKitFace.bounds.x || 0,
+        y: mlKitFace.bounds.y || 0,
+        width: mlKitFace.bounds.width || 0,
+        height: mlKitFace.bounds.height || 0,
+      };
+    }
+    
+    if (!bounds) {
+      console.warn('⚠️ No bounds found in ML Kit face data');
+      return null;
+    }
+    
+    // Extract landmarks - handle array or object maps
+    let landmarks = [];
+    if (mlKitFace.landmarks && Array.isArray(mlKitFace.landmarks)) {
+      landmarks = mlKitFace.landmarks.map(landmark => ({
+        type: landmark.type || landmark.name || 'unknown',
+        position: landmark.position || { x: landmark.x || 0, y: landmark.y || 0 },
+        x: landmark.position?.x || landmark.x || 0,
+        y: landmark.position?.y || landmark.y || 0,
+      }));
+    } else if (mlKitFace.landmarks && typeof mlKitFace.landmarks === 'object') {
+      landmarks = Object.entries(mlKitFace.landmarks).map(([key, val]) => ({
+        type: key || 'unknown',
+        position: val?.position || { x: val?.x || 0, y: val?.y || 0 },
+        x: (val?.position?.x ?? val?.x ?? 0),
+        y: (val?.position?.y ?? val?.y ?? 0),
+      }));
+    }
+    
+    // Extract contours - handle array or object maps
+    let contours = [];
+    if (mlKitFace.contours && Array.isArray(mlKitFace.contours)) {
+      contours = mlKitFace.contours.map(contour => ({
+        type: contour.type || contour.name || 'unknown',
+        points: contour.points || contour.faceContour || [],
+      }));
+    } else if (mlKitFace.contours && typeof mlKitFace.contours === 'object') {
+      contours = Object.entries(mlKitFace.contours).map(([key, val]) => ({
+        type: key || 'unknown',
+        points: Array.isArray(val?.points) ? val.points : [],
+      }));
+    }
+    
+    return {
+      bounds: bounds,
+      headEulerAngleX: mlKitFace.headEulerAngleX || mlKitFace.rotationX || mlKitFace.headEulerAngle?.x || 0,
+      headEulerAngleY: mlKitFace.headEulerAngleY || mlKitFace.rotationY || mlKitFace.headEulerAngle?.y || 0,
+      headEulerAngleZ: mlKitFace.headEulerAngleZ || mlKitFace.rotationZ || mlKitFace.headEulerAngle?.z || 0,
+      landmarks: landmarks,
+      contours: contours,
+      leftEyeOpenProbability: mlKitFace.leftEyeOpenProbability !== undefined ? mlKitFace.leftEyeOpenProbability : (mlKitFace.leftEyeOpen !== undefined ? mlKitFace.leftEyeOpen : null),
+      rightEyeOpenProbability: mlKitFace.rightEyeOpenProbability !== undefined ? mlKitFace.rightEyeOpenProbability : (mlKitFace.rightEyeOpen !== undefined ? mlKitFace.rightEyeOpen : null),
+      smilingProbability: mlKitFace.smilingProbability !== undefined ? mlKitFace.smilingProbability : (mlKitFace.smiling !== undefined ? mlKitFace.smiling : null),
+      trackingId: mlKitFace.trackingId || mlKitFace.trackingID || null,
+      confidence: mlKitFace.confidence || null,
+    };
+  };
+
+  // Face detection using ML Kit
   useEffect(() => {
     if (isCameraOpen && cameraRef.current) {
+      console.log('🚀 Starting face detection interval...');
       const interval = setInterval(async () => {
+        // Check if camera is still open before taking photo
+        if (!isCameraOpen || !cameraRef.current) {
+          console.log('⚠️ Camera closed, stopping detection');
+          return;
+        }
+        
         try {
+          // Double check camera is still open before taking photo
+          if (!isCameraOpen || !cameraRef.current) {
+            console.log('⚠️ Camera closed during detection, skipping...');
+            return;
+          }
+          
+          console.log('📸 Taking photo for detection...');
           // Take a photo for face detection (low quality, fast)
           const photo = await cameraRef.current.takePhoto({
             qualityPrioritization: 'speed',
@@ -294,55 +746,367 @@ const FaceRegistrationScreen = () => {
             skipMetadata: true,
           });
           
-          // Simulate face detection for testing UI
-          const hasFace = Math.random() > 0.3; // 70% chance of detecting face
+          console.log('📁 Photo path:', photo.path);
           
-          if (hasFace) {
-            const simulatedFace = {
-              boundingBox: {
-                x: 0.2 + Math.random() * 0.1,
-                y: 0.2 + Math.random() * 0.1,
-                width: 0.5 + Math.random() * 0.1,
-                height: 0.6 + Math.random() * 0.1,
-              },
-              headEulerAngleX: Math.random() * 10 - 5,
-              headEulerAngleY: Math.random() * 10 - 5,
-              headEulerAngleZ: Math.random() * 10 - 5,
-              landmarks: [],
-              contours: [],
-              leftEyeOpenProbability: 0.8 + Math.random() * 0.2,
-              rightEyeOpenProbability: 0.8 + Math.random() * 0.2,
-              smilingProbability: 0.7 + Math.random() * 0.3
-            };
+          // Use ML Kit to detect faces
+          let faces = [];
+          try {
+            console.log('🔍 Calling ML Kit detect...');
             
-            handleFaceDetected([simulatedFace]);
+            // Try to create FaceDetector with options first (if supported by library)
+            try {
+              // Check if FaceDetectorOptions or options are supported
+              if (FaceDetection.FaceDetectorOptions || FaceDetection.options) {
+                const options = FaceDetection.FaceDetectorOptions || {
+                  performanceMode: 'accurate',
+                  landmarkMode: 'all',
+                  contourMode: 'all',
+                  classificationMode: 'all',
+                  minFaceSize: 0.1,
+                  enableTracking: true,
+                };
+                const detector = FaceDetection.getDetector(options);
+                faces = await detector.detect(`file://${photo.path}`);
+              } else {
+                // Try direct detect with options object
+                const options = {
+                  performanceMode: 'accurate',
+                  landmarkMode: 'all',
+                  contourMode: 'all',
+                  classificationMode: 'all',
+                  minFaceSize: 0.1,
+                  enableTracking: true,
+                };
+                faces = await FaceDetection.detect(`file://${photo.path}`, options);
+              }
+            } catch (optionsError) {
+              console.log('⚠️ Options not supported, trying simple detect:', optionsError.message);
+              // Fallback to simple detect without options
+              faces = await FaceDetection.detect(`file://${photo.path}`);
+            }
+            
+            console.log('🔍 ML Kit raw response:', JSON.stringify(faces, null, 2));
+            console.log('🔍 ML Kit response type:', typeof faces);
+            console.log('🔍 ML Kit response length:', faces?.length);
+            
+            // Normalize ML Kit response to expected format
+            faces = faces.map(normalizeFaceData).filter(f => f !== null);
+            console.log('✅ Normalized faces:', faces);
+            console.log('✅ Normalized faces count:', faces.length);
+            
+            // Debug landmarks in normalized faces
+            faces.forEach((face, idx) => {
+              console.log(`🎯 Normalized face ${idx} landmarks:`, face.landmarks);
+              console.log(`🎯 Normalized face ${idx} landmarks count:`, face.landmarks?.length || 0);
+              if (face.landmarks && face.landmarks.length > 0) {
+                console.log(`🎯 First landmark example:`, face.landmarks[0]);
+              }
+            });
+          } catch (mlKitError) {
+            console.error('ML Kit detection failed, using fallback:', mlKitError);
+            if (ENABLE_SIMULATED_DETECTION) {
+              console.log('🔄 Using simulated face detection for UI testing...');
+              const hasFace = Math.random() > 0.2;
+              if (hasFace) {
+                faces = [{
+                  bounds: { x: 0.5, y: 0.5, width: 0.4, height: 0.5 },
+                  headEulerAngleX: 0,
+                  headEulerAngleY: 0,
+                  headEulerAngleZ: 0,
+                  landmarks: [],
+                  contours: [],
+                  leftEyeOpenProbability: 0.9,
+                  rightEyeOpenProbability: 0.9,
+                  smilingProbability: 0.8
+                }];
+                console.log('🎭 Simulated face created:', faces[0]);
+              }
+            }
+          }
+          
+          // If ML Kit returns empty array, use simulated data for testing
+          if (faces.length === 0 && ENABLE_SIMULATED_DETECTION) {
+            console.log('🔄 ML Kit returned empty array, using simulated face for UI testing...');
+            const hasFace = Math.random() > 0.1; // 90% chance for testing
+            if (hasFace) {
+              faces = [{
+                bounds: {
+                  x: 0.3 + Math.random() * 0.2,
+                  y: 0.3 + Math.random() * 0.2,
+                  width: 0.4 + Math.random() * 0.1,
+                  height: 0.5 + Math.random() * 0.1,
+                },
+                headEulerAngleX: Math.random() * 6 - 3,
+                headEulerAngleY: Math.random() * 6 - 3,
+                headEulerAngleZ: Math.random() * 6 - 3,
+                landmarks: [],
+                contours: [],
+                leftEyeOpenProbability: 0.9 + Math.random() * 0.1,
+                rightEyeOpenProbability: 0.9 + Math.random() * 0.1,
+                smilingProbability: 0.8 + Math.random() * 0.2
+              }];
+              console.log('🎭 Simulated face created for empty ML Kit response:', faces[0]);
+            }
+          }
+          
+          console.log('🔍 Processing faces result...');
+          console.log('🔍 Faces array:', faces);
+          console.log('🔍 Faces length:', faces?.length);
+          
+          if (faces && faces.length > 0) {
+            console.log('✅ Found faces, processing first one...');
+            const face = faces[0]; // Take the first detected face
+            console.log('🎯 First face data:', face);
+            
+            const isValidFace = isGoodFaceQuality(face);
+            console.log('🎯 Face quality check result:', isValidFace);
+            console.log('🎯 Face bounds:', face.bounds);
+            
+            setFaceDetected(true);
+            setFaceData(face);
+            setCanCapture(isValidFace);
+            
+            console.log('🎯 Updated state - faceDetected: true, canCapture:', isValidFace);
+            
+            // Auto capture if face quality is good and auto capture is enabled
+            if (isValidFace && autoCaptureEnabled && !isCapturing && !isUploading) {
+              console.log('🚀 Auto capturing face...');
+              takePicture();
+            }
+            
+            // Auto register if face quality is good and auto registration is enabled
+            if (isValidFace && autoRegisterEnabled && !isCapturing && !isUploading) {
+              const now = Date.now();
+              const timeSinceLastRegistration = now - lastRegistrationTime;
+              
+              // Only auto-register if it's been at least 3 seconds since last registration
+              if (timeSinceLastRegistration > 3000) {
+                console.log('🚀 Auto-registering face...');
+                setLastRegistrationTime(now);
+                
+                // Take photo and register immediately
+                takePictureAndRegister(face);
+              }
+            }
+            
+            // Multi-pose auto embedding collection (no image upload) – ensure it runs in this interval path
+            try {
+              if (isMultiPoseActive && isValidFace && face) {
+                const yaw = face.headEulerAngleY || 0; // quay trái/phải
+                const pitch = face.headEulerAngleX || 0; // ngước lên/xuống
+                const isFront = Math.abs(yaw) < 10 && Math.abs(pitch) < 12;
+                const isLeft = yaw < -6 && Math.abs(pitch) < 18; // nới lỏng yaw/pitch
+                const isRight = yaw > 6 && Math.abs(pitch) < 18; // nới lỏng yaw/pitch
+                const isUp = pitch > 10;
+
+                const targetIdx = poseStepRef.current;
+                let ok = false;
+                if (targetIdx === 0) ok = isFront;
+                else if (targetIdx === 1) ok = isLeft;
+                else if (targetIdx === 2) ok = isRight;
+                else if (targetIdx === 3) ok = isUp;
+
+                console.log(`[POSE] step=${targetIdx} yaw=${(yaw||0).toFixed(1)} pitch=${(pitch||0).toFixed(1)} front=${isFront} left=${isLeft} right=${isRight} up=${isUp} collecting=${isPoseCollectingRef.current}`);
+                if (!isLeft && targetIdx === 1) {
+                  const need = (-(6 + 0.1) - (yaw||0));
+                  console.log(`👉 Quay trái thêm ~${Math.max(0, need).toFixed(1)}°`);
+                }
+                if (!isRight && targetIdx === 2) {
+                  const need = ((6 + 0.1) - (yaw||0));
+                  console.log(`👉 Quay phải thêm ~${Math.max(0, need).toFixed(1)}°`);
+                }
+
+                if (ok) {
+                  if (isPoseCollectingRef.current || lastPoseStepRef.current === targetIdx) {
+                    // đang ghi nhận hoặc đã ghi nhận pose này
+                  } else {
+                    isPoseCollectingRef.current = true;
+                    // Try to use FaceNet embedding if available, fallback to custom
+                    getEmbeddingFromFace(face, photo.path).then((result) => {
+                      if (!result || !result.embedding) {
+                        console.error('❌ Failed to extract embedding');
+                        isPoseCollectingRef.current = false;
+                        return;
+                      }
+                      
+                      const embNorm = result.embedding;
+                      
+                      // Validate user ID
+                      if (!user?.id) {
+                        console.error('❌ User ID is missing');
+                        Alert.alert('Lỗi', 'Không thể xác định người dùng. Vui lòng đăng nhập lại.');
+                        isPoseCollectingRef.current = false;
+                        return;
+                      }
+                      
+                      // Validate embedding - can be Array, TypedArray (Float32Array), or array-like object
+                      if (!embNorm) {
+                        console.error('❌ Embedding is null/undefined');
+                        Alert.alert('Lỗi', 'Không thể trích xuất đặc điểm khuôn mặt. Vui lòng thử lại.');
+                        isPoseCollectingRef.current = false;
+                        return;
+                      }
+                      
+                      // Check if it has length property (works for Array, TypedArray, and array-like objects)
+                      if (typeof embNorm.length !== 'number' || embNorm.length === 0) {
+                        console.error('❌ Invalid embedding: missing or empty length', typeof embNorm, embNorm?.constructor?.name);
+                        Alert.alert('Lỗi', 'Embedding rỗng. Vui lòng thử lại.');
+                        isPoseCollectingRef.current = false;
+                        return;
+                      }
+                      
+                      // Convert TypedArray or array-like object to regular array (for JSON serialization)
+                      // This handles Float32Array, Uint8Array, regular Arrays, and any array-like objects
+                      const embeddingArray = Array.isArray(embNorm) 
+                        ? embNorm 
+                        : (embNorm.length ? Array.from(embNorm) : []);
+                      
+                      // Validate embedding dimension (should be 256 or 512)
+                      if (embeddingArray.length !== 256 && embeddingArray.length !== 512) {
+                        console.error(`❌ Invalid embedding dimension: ${embeddingArray.length} (expected 256 or 512)`);
+                        Alert.alert('Lỗi', `Embedding không đúng định dạng (${embeddingArray.length} dimensions, cần 256 hoặc 512)`);
+                        isPoseCollectingRef.current = false;
+                        return;
+                      }
+                      
+                      const q = calculateFaceQuality(extractFaceFeatures(face), true); // true = isMultiPose
+                      console.log(`🧩 Gửi đăng ký pose ${targetIdx + 1}/4 (${result.source}, ${embeddingArray.length} dim, Q=${q.toFixed(0)})`);
+                      console.log(`📋 User ID: ${user.id}, Embedding length: ${embeddingArray.length}`);
+                      
+                      const poseMap = { 0: 'front', 1: 'left', 2: 'right', 3: 'up' };
+                      const poseLabel = poseMap[targetIdx] || 'front';
+                      const body = {
+                        employeeId: user.id,
+                        embedding: embeddingArray, // Use regular array, not TypedArray
+                        faceQualityScore: q,
+                        notes: `Pose ${poseLabel} - ${new Date().toLocaleString('vi-VN')}`,
+                        pose: poseLabel,
+                      };
+                      
+                      console.log(`📤 Sending request body keys:`, Object.keys(body));
+                      console.log(`📤 Embedding preview (first 5):`, embeddingArray.slice(0, 5));
+                      
+                      api.post('/FaceRegistration/register-embedding', body).then((res) => {
+                          if (res.data?.success) {
+                            console.log(`✅ Đăng ký pose ${poseLabel} thành công`);
+                            if (targetIdx < 3) {
+                              lastPoseStepRef.current = targetIdx;
+                              setTimeout(() => {
+                                setPoseStep(prev => prev + 1);
+                                isPoseCollectingRef.current = false;
+                              }, 700);
+                            } else {
+                              Alert.alert('Thành công', 'Đăng ký đủ 4 góc khuôn mặt!');
+                              setCollectedEmbeddings([]);
+                              setCollectedQualities([]);
+                              setPoseStep(0);
+                              setIsMultiPoseActive(false);
+                              lastPoseStepRef.current = -1;
+                              isPoseCollectingRef.current = false;
+                              loadFaceRegistrations();
+                              // Tự động đóng camera và quay về trang đăng ký
+                              setTimeout(() => {
+                                setIsCameraOpen(false);
+                              }, 500);
+                            }
+                          } else {
+                            Alert.alert('Lỗi', res.data?.message || 'Không thể đăng ký pose');
+                            isPoseCollectingRef.current = false;
+                          }
+                        }).catch((e) => {
+                          console.error('❌ Lỗi đăng ký pose:', e);
+                          console.error('❌ Error response:', e.response?.data);
+                          console.error('❌ Error status:', e.response?.status);
+                          console.error('❌ Error message:', e.message);
+                          
+                          const errorMessage = e.response?.data?.message || e.response?.data?.Message || e.message || 'Không thể đăng ký pose';
+                          Alert.alert('Lỗi', errorMessage);
+                          isPoseCollectingRef.current = false;
+                        }).finally(() => {
+                          setTimeout(() => {
+                            if (isPoseCollectingRef.current) {
+                              console.log('[POSE] watchdog: reset collecting flag');
+                              isPoseCollectingRef.current = false;
+                            }
+                          }, 3000);
+                        });
+                    }).catch((embeddingError) => {
+                      console.error('❌ Error extracting embedding:', embeddingError);
+                      isPoseCollectingRef.current = false;
+                    });
+                  }
+                }
+              }
+            } catch (e) {
+              console.log('⚠️ Multi-pose collect error (interval path):', e?.message || e);
+              isPoseCollectingRef.current = false;
+            }
+            
+            console.log('Face detected:', {
+              isValid: isValidFace,
+              size: face.bounds.width * face.bounds.height,
+              angles: {
+                x: face.headEulerAngleX,
+                y: face.headEulerAngleY,
+                z: face.headEulerAngleZ
+              }
+            });
           } else {
-            handleFaceDetected([]);
+            console.log('❌ No faces detected or empty array');
+            console.log('❌ Setting faceDetected to false');
+            setFaceDetected(false);
+            setFaceData(null);
+            setCanCapture(false);
           }
           
           // Clean up the temporary photo
           // Note: In production, you might want to delete the temp file
         } catch (error) {
-          console.error('Face detection error:', error);
-          handleFaceDetected([]);
+          // Only log error if camera is still open (avoid "Camera is closed" spam)
+          if (isCameraOpen && error.message && !error.message.includes('Camera is closed')) {
+            console.error('ML Kit face detection error:', error);
+          }
+          setFaceDetected(false);
+          setFaceData(null);
+          setCanCapture(false);
         }
       }, 500); // Check every 500ms for more responsive detection
       
-      return () => clearInterval(interval);
+      return () => {
+        console.log('🛑 Cleaning up face detection interval');
+        clearInterval(interval);
+      };
+    } else {
+      console.log('📷 Camera not open, no detection started');
     }
-  }, [isCameraOpen]);
+  }, [isCameraOpen, autoCaptureEnabled, isCapturing, isUploading]);
 
-  const openCamera = () => {
-    if (!hasPermission) {
-      Alert.alert('Permission Required', 'Camera permission is required to register face.');
-      return;
-    }
+  const openCamera = async () => {
+    console.log('📷 Opening camera...');
+    console.log('📷 Device available:', !!device);
+    
     if (!device) {
       Alert.alert('Camera Error', 'No camera device found.');
       return;
     }
+    
+    // Request permission when opening camera (ensures app is fully launched)
+    const hasPerm = await checkCameraPermission();
+    
+    if (!hasPerm) {
+      Alert.alert(
+        'Permission Required', 
+        'Camera permission is required to register face. Please grant camera permission in settings.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+    
+    console.log('📷 Setting camera open to true');
     setIsCameraOpen(true);
     setFaceDetected(false);
+    setFaceData(null);
+    setCanCapture(false);
   };
 
   const takePicture = async () => {
@@ -369,25 +1133,331 @@ const FaceRegistrationScreen = () => {
     }
   };
 
-  const processFaceRegistrationFromFile = async (imagePath) => {
+  const takePictureAndRegister = async (faceData) => {
+    if (!cameraRef.current) return;
+    
+    try {
+      setIsCapturing(true);
+      const photo = await cameraRef.current.takePhoto({
+        qualityPrioritization: 'quality',
+        flash: 'off',
+      });
+      
+      console.log(`📸 Auto-captured image path: ${photo.path}`);
+      
+      // Process registration with file path and face data
+      await processFaceRegistrationFromFile(photo.path, faceData);
+    } catch (error) {
+      console.error('Auto take picture error:', error);
+    } finally {
+      setIsCapturing(false);
+    }
+  };
+
+  const processFaceRegistrationFromFile = async (imagePath, faceFeatures = null) => {
     try {
       setIsUploading(true);
       setUploadStatus(null);
+      // Compute embedding (FaceNet first, fallback to custom)
+      const extractedFaceFeatures = faceData ? extractFaceFeatures(faceData) : null;
+      
+      // Try to use FaceNet embedding if available
+      const result = await getEmbeddingFromFace(faceData || faceFeatures, imagePath);
+      if (!result || !result.embedding) {
+        throw new Error('Không thể trích xuất embedding từ khuôn mặt');
+      }
 
-      // For now, use a placeholder base64
-      // In production, you would use react-native-fs or similar to read file
-      const placeholderBase64 = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAv/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAX/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwCdABmX/9k=';
-      
-      // Extract face features from current face data
-      const faceFeatures = faceData ? extractFaceFeatures(faceData) : null;
-      
-      await processFaceRegistration(placeholderBase64.split(',')[1], faceFeatures);
+      console.log(`📊 Registration embedding: ${result.source}, ${result.embedding.length} dim`);
+
+      const body = {
+        employeeId: user?.id,
+        embedding: result.embedding,
+        faceQualityScore: extractedFaceFeatures ? calculateFaceQuality(extractedFaceFeatures) : null,
+        notes: `Đăng ký khuôn mặt - ${new Date().toLocaleString('vi-VN')}`,
+      };
+
+      const response = await api.post('/FaceRegistration/register-embedding', body);
+
+      if (response.data.success) {
+        setUploadStatus('success');
+        Alert.alert(
+          'Thành công',
+          `Đăng ký khuôn mặt thành công!`,
+          [
+            {
+              text: 'OK',
+              onPress: () => {
+                setCapturedImage(null);
+                setUploadStatus(null);
+                loadFaceRegistrations();
+              }
+            }
+          ]
+        );
+      } else {
+        setUploadStatus('error');
+        Alert.alert('Lỗi', response.data.message || 'Không thể đăng ký khuôn mặt');
+      }
     } catch (error) {
       console.error('Process file error:', error);
       setUploadStatus('error');
       Alert.alert('Error', 'Failed to process image');
       setIsUploading(false);
     }
+  };
+
+  // Extract FaceNet embedding from face image using local model
+  const extractFaceNetEmbedding = async (photoPath, faceBounds) => {
+    try {
+      // Ensure model is loaded
+      const loaded = await faceNetService.loadModel();
+      if (!loaded || !faceNetService.isReady()) {
+        throw new Error('FaceNet model not loaded. Please ensure facenet_512.tflite is available in assets.');
+      }
+
+      console.log('🔄 Extracting FaceNet embedding...');
+      console.log(`📸 Image path: ${photoPath}`);
+      console.log(`📐 Face bounds:`, faceBounds);
+      
+      // Call FaceNet service to extract embedding (will try local first, then server API)
+      const embedding = await faceNetService.extractEmbedding(photoPath, faceBounds);
+      
+      if (!embedding) {
+        throw new Error('FaceNet service returned null embedding');
+      }
+      
+      if (embedding.length !== 512) {
+        throw new Error(`Invalid embedding dimension: expected 512, got ${embedding.length}`);
+      }
+      
+      console.log(`✅ FaceNet embedding extracted: ${embedding.length} dimensions`);
+      return embedding;
+    } catch (error) {
+      console.error('❌ Error extracting FaceNet embedding:', error);
+      console.error('❌ Error details:', error.message);
+      console.error('❌ Stack trace:', error.stack);
+      // Throw error instead of returning null so caller knows what went wrong
+      throw error;
+    }
+  };
+
+  // Helper function to get embedding (FaceNet only - NO fallback to custom)
+  // If FaceNet fails, throw error so user knows what went wrong
+  const getEmbeddingFromFace = async (face, photoPath = null) => {
+    try {
+      // FaceNet is required - check if we have photo path and face bounds
+      if (!photoPath) {
+        throw new Error('FaceNet requires photo path. Photo path is missing.');
+      }
+      
+      if (!face?.bounds) {
+        throw new Error('FaceNet requires face bounds. Face bounds are missing.');
+      }
+      
+      console.log('🔄 Attempting to extract FaceNet embedding...');
+      const embedding = await extractFaceNetEmbedding(photoPath, face.bounds);
+      
+      if (!embedding || embedding.length !== 512) {
+        throw new Error(`FaceNet embedding extraction failed: got ${embedding?.length || 0} dimensions, expected 512`);
+      }
+      
+      console.log('✅ Using FaceNet 512-dim embedding');
+      
+      // L2 normalize (FaceNet embeddings should already be normalized, but ensure it)
+      const norm = Math.sqrt(embedding.reduce((s, v) => s + v * v, 0));
+      if (!isFinite(norm) || norm <= 0) {
+        throw new Error('FaceNet embedding is invalid (norm=0)');
+      }
+      
+      const embeddingNorm = embedding; // Already normalized from FaceNet service
+      return { embedding: embeddingNorm, source: 'facenet' };
+      
+    } catch (error) {
+      console.error('❌ Error extracting FaceNet embedding:', error);
+      console.error('❌ Error details:', error.message);
+      console.error('❌ Stack trace:', error.stack);
+      // Throw error instead of falling back to custom embedding
+      throw new Error(`FaceNet embedding extraction failed: ${error.message}`);
+    }
+  };
+
+  // Build a lightweight on-device embedding from normalized landmarks + angles
+  // IMPORTANT: This must match exactly with SimpleFaceRecognitionCamera.js computeEmbeddingFromFaceData
+  const computeEmbeddingFromFaceData = (face) => {
+    if (!face || !face.bounds) return null;
+    const bx = face.bounds.x || 0;
+    const by = face.bounds.y || 0;
+    const bw = face.bounds.width || 1;
+    const bh = face.bounds.height || 1;
+
+    const order = [
+      'leftEye', 'rightEye', 'nose', 'mouthLeft', 'mouthRight',
+      'leftEar', 'rightEar', 'leftCheek', 'rightCheek'
+    ];
+
+    const points = [];
+    // Helper to clamp finite numbers
+    const safe = (v) => (Number.isFinite(v) ? v : 0);
+    if (Array.isArray(face.landmarks) && face.landmarks.length > 0) {
+      const normalized = face.landmarks.map(lm => {
+        const lx = (lm.position?.x ?? lm.x ?? 0);
+        const ly = (lm.position?.y ?? lm.y ?? 0);
+        return {
+          type: (lm.type || lm.name || '').toString().toLowerCase(),
+          x: safe((lx - bx) / (bw || 1)),
+          y: safe((ly - by) / (bh || 1))
+        };
+      });
+
+      order.forEach(key => {
+        const found = normalized.find(p => p.type && p.type.includes(key.toLowerCase()));
+        if (found) { points.push(found.x, found.y); } else { points.push(0, 0); }
+      });
+
+      // Extra geometric ratios for more discriminative embedding
+      const find = (key) => normalized.find(p => p.type && p.type.includes(key));
+      const leftEye = find('lefteye');
+      const rightEye = find('righteye');
+      const nose = find('nose');
+      const mouthLeft = find('mouthleft');
+      const mouthRight = find('mouthright');
+      const mouthBottom = find('mouthbottom');
+      const leftEar = find('leftear');
+      const rightEar = find('rightear');
+      const leftCheek = find('leftcheek');
+      const rightCheek = find('rightcheek');
+
+      const dist = (a, b) => (a && b) ? Math.hypot(a.x - b.x, a.y - b.y) : 0;
+
+      const eyeDist = dist(leftEye, rightEye);
+      const mouthWidth = dist(mouthLeft, mouthRight);
+      const noseMouth = dist(nose, mouthBottom || mouthLeft || mouthRight);
+      const earWidth = dist(leftEar, rightEar);
+      const cheekWidth = dist(leftCheek, rightCheek);
+
+      // Calculate actual face aspect ratio from bounds (not normalized to 1)
+      const faceAspectRatioBounds = safe(bw / (bh || 1e-6));
+
+      // Ratios normalized by face size (distances are already normalized by bounds)
+      const ratios = [
+        safe(eyeDist),
+        safe(mouthWidth),
+        safe(noseMouth),
+        safe(earWidth),
+        safe(cheekWidth),
+        safe(eyeDist / (mouthWidth || 1e-6)),
+        safe(noseMouth / (eyeDist || 1e-6)),
+        safe(mouthWidth / (cheekWidth || 1e-6)),
+        safe(earWidth / (cheekWidth || 1e-6)),
+        faceAspectRatioBounds, // Actual face box aspect ratio
+      ];
+      points.push(...ratios);
+
+      // Track which landmark types have already been added to avoid duplicates
+      const addedLandmarkTypes = new Set();
+      order.forEach(key => {
+        const found = normalized.find(p => p.type && p.type.includes(key.toLowerCase()));
+        if (found) {
+          addedLandmarkTypes.add(found.type);
+        }
+      });
+
+      // Append remaining landmark coordinates that haven't been added yet
+      for (let i = 0; i < normalized.length; i++) {
+        const lm = normalized[i];
+        // Only add if this landmark type hasn't been added in the ordered section
+        if (!addedLandmarkTypes.has(lm.type)) {
+          points.push(lm.x, lm.y);
+          addedLandmarkTypes.add(lm.type); // Mark as added to prevent duplicates in remaining landmarks
+        }
+      }
+      
+      // Add more geometric features for better discrimination
+      // Face symmetry features
+      const faceCenterX = safe((leftEye?.x || 0) + (rightEye?.x || 0)) / 2;
+      const faceCenterY = safe((leftEye?.y || 0) + (rightEye?.y || 0)) / 2;
+      
+      // Additional distance features
+      const leftEyeNose = dist(leftEye, nose);
+      const rightEyeNose = dist(rightEye, nose);
+      const leftEyeMouth = dist(leftEye, mouthLeft || mouthBottom);
+      const rightEyeMouth = dist(rightEye, mouthRight || mouthBottom);
+      
+      // Symmetry ratios
+      const eyeSymmetry = Math.abs(leftEyeNose - rightEyeNose) / (eyeDist || 1e-6);
+      const mouthSymmetry = Math.abs(leftEyeMouth - rightEyeMouth) / (eyeDist || 1e-6);
+      
+      // More facial proportions
+      const faceWidth = cheekWidth || earWidth || eyeDist * 1.5;
+      const faceHeight = noseMouth + eyeDist;
+      const faceAspectRatio = safe(faceWidth / (faceHeight || 1e-6));
+      
+      points.push(
+        faceCenterX,
+        faceCenterY,
+        leftEyeNose,
+        rightEyeNose,
+        leftEyeMouth,
+        rightEyeMouth,
+        eyeSymmetry,
+        mouthSymmetry,
+        faceAspectRatio,
+        safe(eyeDist / (faceWidth || 1e-6)), // Eye spacing relative to face width
+        safe(noseMouth / (faceHeight || 1e-6)) // Nose-mouth relative to face height
+      );
+    }
+
+    points.push(
+      (Math.abs(face.headEulerAngleX || 0) / 45),
+      (Math.abs(face.headEulerAngleY || 0) / 45),
+      (Math.abs(face.headEulerAngleZ || 0) / 45)
+    );
+    points.push(
+      Math.max(0, Math.min(1, face.leftEyeOpenProbability || 0)),
+      Math.max(0, Math.min(1, face.rightEyeOpenProbability || 0)),
+      Math.max(0, Math.min(1, face.smilingProbability || 0))
+    );
+    
+    // Add contour features if available (from ML Kit contours)
+    if (face.contours && Array.isArray(face.contours) && face.contours.length > 0) {
+      // Sample key contour points (nose bridge, lip boundaries, etc.)
+      const contourSampleSize = Math.min(10, face.contours.length);
+      for (let i = 0; i < contourSampleSize; i++) {
+        const contour = face.contours[i];
+        if (contour.points && Array.isArray(contour.points) && contour.points.length > 0) {
+          // Add first point of each contour (normalized by bounds)
+          const firstPoint = contour.points[0];
+          if (firstPoint && (firstPoint.x !== undefined) && (firstPoint.y !== undefined)) {
+            // Normalize contour point by face bounds (same coordinate system as landmarks)
+            const normalizedX = safe((firstPoint.x - bx) / (bw || 1));
+            const normalizedY = safe((firstPoint.y - by) / (bh || 1));
+            // Validate normalized coordinates are reasonable (between -0.5 and 1.5 to allow for some margin)
+            if (normalizedX >= -0.5 && normalizedX <= 1.5 && normalizedY >= -0.5 && normalizedY <= 1.5) {
+              points.push(normalizedX, normalizedY);
+            }
+          }
+        }
+      }
+    }
+
+    // Increase target to 256 for better discrimination
+    const TARGET = 256;
+    if (points.length < TARGET) {
+      // Pad with zeros if needed, but try to fill with derived features
+      // Add some derived statistics from existing points (using actual values, not abs)
+      if (points.length > 0) {
+        const mean = points.reduce((s, v) => s + v, 0) / points.length;
+        const variance = points.reduce((s, v) => s + Math.pow(v - mean, 2), 0) / points.length;
+        points.push(mean, Math.sqrt(Math.max(0, variance))); // Ensure std dev is non-negative
+        // Fill rest with zeros
+        while (points.length < TARGET) points.push(0);
+      } else {
+        while (points.length < TARGET) points.push(0);
+      }
+    } else if (points.length > TARGET) {
+      points.length = TARGET;
+    }
+    return points.map(v => (typeof v === 'number' ? v : 0));
   };
 
   return (
@@ -498,135 +1568,197 @@ const FaceRegistrationScreen = () => {
             {device && (
               <Camera
                 ref={cameraRef}
-                style={styles.camera}
+                style={StyleSheet.absoluteFill}
                 device={device}
                 isActive={isCameraOpen}
                 photo={true}
+              />
+            )}
+            
+            {/* Camera Header - moved outside Camera component */}
+            <View style={styles.cameraHeader}>
+              <TouchableOpacity 
+                style={styles.closeBtn} 
+                onPress={() => setIsCameraOpen(false)}
               >
-                <View style={styles.cameraHeader}>
-                  <TouchableOpacity 
-                    style={styles.closeBtn} 
-                    onPress={() => setIsCameraOpen(false)}
+                <Icon name="close" size={32} color="#fff" />
+              </TouchableOpacity>
+              
+             
+            </View>
+
+            {/* Face Detection Overlay - moved outside Camera component */}
+            {faceDetected && faceData && (
+              <View style={styles.faceOverlay}>
+                {/* Debug dock (bottom, collapsible) */}
+                <View style={styles.debugDock}>
+                  <TouchableOpacity
+                    style={styles.debugHeader}
+                    activeOpacity={0.85}
+                    onPress={() => setDebugExpanded(v => !v)}
                   >
-                    <Icon name="close" size={32} color="#fff" />
+                    <Icon name={debugExpanded ? 'chevron-down' : 'chevron-up'} size={18} color="#60a5fa" />
+                    <Text style={styles.debugHeaderText}>Thông tin khuôn mặt</Text>
+                    <View style={{ flex: 1 }} />
+                    <Text style={styles.debugMiniText}>
+                      {`LM ${faceData.landmarks?.length || 0}`} · {`Q ${calculateFaceQuality(extractFaceFeatures(faceData)).toFixed(0)}`}
+                    </Text>
                   </TouchableOpacity>
-                  
-                  <View style={styles.faceIndicator}>
-                    <View style={[
-                      styles.faceIconContainer,
-                      { backgroundColor: canCapture ? "rgba(34, 197, 94, 0.3)" : faceDetected ? "rgba(251, 191, 36, 0.3)" : "rgba(148, 163, 184, 0.3)" }
-                    ]}>
-                      <Icon 
-                        name={canCapture ? "face-recognition" : faceDetected ? "face-recognition-outline" : "face-recognition-outline"} 
-                        size={32} 
-                        color={canCapture ? "#22c55e" : faceDetected ? "#f59e0b" : "#94a3b8"} 
-                      />
+                  {debugExpanded && (
+                    <View style={styles.debugPanel}>
+                      <Text style={styles.debugBoundsTitle}>📊 ĐẶC ĐIỂM KHUÔN MẶT</Text>
+                      <Text style={styles.debugBoundsSection}>📍 Vị trí (Bounds):</Text>
+                      <Text style={styles.debugBoundsText}>
+                        x:{faceData.bounds.x.toFixed(0)} y:{faceData.bounds.y.toFixed(0)} w:{faceData.bounds.width.toFixed(0)} h:{faceData.bounds.height.toFixed(0)}
+                      </Text>
+                      <Text style={styles.debugBoundsSection}>🔄 Góc quay đầu (Head Angles):</Text>
+                      <Text style={styles.debugBoundsText}>
+                        X: {faceData.headEulerAngleX?.toFixed(1) || 0}°  Y: {faceData.headEulerAngleY?.toFixed(1) || 0}°  Z: {faceData.headEulerAngleZ?.toFixed(1) || 0}°
+                      </Text>
+                      <Text style={styles.debugBoundsSection}>👁️ Mắt (Eye Open):</Text>
+                      <Text style={styles.debugBoundsText}>
+                        L: {(faceData.leftEyeOpenProbability || 0).toFixed(2)}  R: {(faceData.rightEyeOpenProbability || 0).toFixed(2)}
+                      </Text>
+                      <Text style={styles.debugBoundsSection}>😊 Cười (Smiling):</Text>
+                      <Text style={styles.debugBoundsText}>
+                        {(faceData.smilingProbability || 0).toFixed(2)}
+                      </Text>
+                      <Text style={styles.debugBoundsSection}>🎯 Landmarks:</Text>
+                      <Text style={styles.debugBoundsText}>{faceData.landmarks?.length || 0} điểm</Text>
+                      {Array.isArray(faceData.landmarks) && faceData.landmarks.length > 0 && (
+                        faceData.landmarks.map((lm, idx) => {
+                          const x = lm.position?.x ?? lm.x ?? 0;
+                          const y = lm.position?.y ?? lm.y ?? 0;
+                          return (
+                            <Text style={styles.debugBoundsText} key={idx}>
+                              {lm.type || lm.name || `P${idx+1}`}: ({x.toFixed(1)}, {y.toFixed(1)})
+                            </Text>
+                          );
+                        })
+                      )}
+                      <Text style={styles.debugBoundsSection}>⭐ Chất lượng:</Text>
+                      <Text style={styles.debugBoundsText}>
+                        {calculateFaceQuality(extractFaceFeatures(faceData)).toFixed(0)}/100
+                      </Text>
                     </View>
+                  )}
+                </View>
+                
+                {/* Ẩn các điểm landmark trên UI - chỉ hiển thị debug panel */}
+                {null}
+                
+                {/* Ẩn các điểm contour trên UI */}
+                {null}
+                
+                <View style={[
+                  styles.faceFrame,
+                  { 
+                    backgroundColor: canCapture ? "rgba(34, 197, 94, 0.15)" : "rgba(251, 191, 36, 0.15)",
+                    borderColor: canCapture ? "#22c55e" : "#f59e0b",
+                    borderWidth: canCapture ? 3 : 2,
+                    // Move frame down significantly to cover face, not forehead
+                    left: (faceData.bounds.x * screenWidth / 1080) -30,
+                    top: (faceData.bounds.y * screenWidth / 1080) + 110,   // Moved down much more: +30 to +60
+                    width: (faceData.bounds.width * screenWidth / 1080) + 30,
+                    height: (faceData.bounds.height * screenWidth / 1080) + 40,
+                  }
+                ]}>
+                  {/* Corner indicators */}
+                  <View style={[
+                    styles.faceFrameCorner,
+                    styles.faceFrameTopLeft,
+                    { borderColor: canCapture ? "#22c55e" : "#f59e0b" }
+                  ]} />
+                  <View style={[
+                    styles.faceFrameCorner,
+                    styles.faceFrameTopRight,
+                    { borderColor: canCapture ? "#22c55e" : "#f59e0b" }
+                  ]} />
+                  <View style={[
+                    styles.faceFrameCorner,
+                    styles.faceFrameBottomLeft,
+                    { borderColor: canCapture ? "#22c55e" : "#f59e0b" }
+                  ]} />
+                  <View style={[
+                    styles.faceFrameCorner,
+                    styles.faceFrameBottomRight,
+                    { borderColor: canCapture ? "#22c55e" : "#f59e0b" }
+                  ]} />
+                  
+                  {/* Center focus point */}
+                  <View style={[
+                    styles.centerFocus,
+                    { backgroundColor: canCapture ? "#22c55e" : "#f59e0b" }
+                  ]} />
+                  
+                  {/* Status text */}
+                  <View style={styles.frameStatusText}>
                     <Text style={[
-                      styles.faceIndicatorText,
-                      { color: canCapture ? "#22c55e" : faceDetected ? "#f59e0b" : "#94a3b8" }
+                      styles.frameStatusLabel,
+                      { color: canCapture ? "#22c55e" : "#f59e0b" }
                     ]}>
-                      {canCapture ? "✅ Sẵn sàng chụp ảnh" : faceDetected ? "⚠️ Điều chỉnh vị trí" : "🔍 Tìm khuôn mặt..."}
+                      {canCapture ? "✅ READY" : "⚠️ ADJUST"}
                     </Text>
                   </View>
                 </View>
+              </View>
+            )}
 
-                {/* Face Detection Overlay */}
-                {faceDetected && faceData && (
-                  <View style={styles.faceOverlay}>
-                    <View style={[
-                      styles.faceFrame,
-                      { 
-                        backgroundColor: canCapture ? "rgba(34, 197, 94, 0.1)" : "rgba(251, 191, 36, 0.1)",
-                        borderColor: canCapture ? "#22c55e" : "#f59e0b",
-                        // Position based on actual face bounding box
-                        left: faceData.boundingBox.x * screenWidth - 125,
-                        top: faceData.boundingBox.y * screenWidth - 150,
-                        width: faceData.boundingBox.width * screenWidth,
-                        height: faceData.boundingBox.height * screenWidth,
-                      }
-                    ]}>
-                      <View style={[
-                        styles.faceFrameCorner,
-                        styles.faceFrameTopLeft,
-                        { borderColor: canCapture ? "#22c55e" : "#f59e0b" }
-                      ]} />
-                      <View style={[
-                        styles.faceFrameCorner,
-                        styles.faceFrameTopRight,
-                        { borderColor: canCapture ? "#22c55e" : "#f59e0b" }
-                      ]} />
-                      <View style={[
-                        styles.faceFrameCorner,
-                        styles.faceFrameBottomLeft,
-                        { borderColor: canCapture ? "#22c55e" : "#f59e0b" }
-                      ]} />
-                      <View style={[
-                        styles.faceFrameCorner,
-                        styles.faceFrameBottomRight,
-                        { borderColor: canCapture ? "#22c55e" : "#f59e0b" }
-                      ]} />
-                    </View>
+            {/* Camera Footer */}
+            <View style={styles.cameraFooter}>
+              {!isMultiPoseActive && (
+                <TouchableOpacity 
+                  style={[
+                    styles.registerBtn,
+                    (!canCapture || isCapturing) && styles.registerBtnDisabled
+                  ]} 
+                  onPress={takePicture}
+                  disabled={!canCapture || isCapturing}
+                >
+                  <View style={styles.registerInnerCircle}>
+                    {isCapturing ? (
+                      <ActivityIndicator size="small" color="#000" />
+                    ) : (
+                      <Icon name="face-recognition" size={30} color="#000" />
+                    )}
                   </View>
-                )}
-
-                <View style={styles.cameraFooter}>
-                  <TouchableOpacity 
-                    style={[
-                      styles.captureBtn,
-                      (!canCapture || isCapturing) && styles.captureBtnDisabled
-                    ]} 
-                    onPress={takePicture}
-                    disabled={!canCapture || isCapturing}
-                  >
-                    <View style={styles.captureInnerCircle}>
-                      {isCapturing ? (
-                        <ActivityIndicator size="small" color="#000" />
-                      ) : (
-                        <Icon name="camera" size={30} color="#000" />
-                      )}
-                    </View>
-                  </TouchableOpacity>
-                </View>
-
-                <View style={styles.instructionContainer}>
-                  <Text style={styles.instructionText}>
-                    📸 Đặt khuôn mặt trong khung và chụp ảnh
+                  <Text style={styles.registerBtnText}>
+                    {isCapturing ? "Đang đăng ký..." : "ĐĂNG KÝ KHUÔN MẶT"}
                   </Text>
+                </TouchableOpacity>
+              )}
+            </View>
+
+            {/* Instruction Container - Moved to bottom */}
+            <View style={styles.instructionContainer}>
+              {isMultiPoseActive ? (
+                <>
+                  <Text style={styles.instructionText}>{getPoseTitle(poseStep)}</Text>
+                  <Text style={[styles.instructionText, { opacity: 0.85 }]}>{getPoseHint(poseStep)}</Text>
                   {!faceDetected && (
-                    <Text style={styles.waitingText}>Đang tìm khuôn mặt...</Text>
+                    <Text style={styles.instructionText}>🔍 Đang tìm khuôn mặt...</Text>
                   )}
                   {faceDetected && !canCapture && (
-                    <Text style={styles.adjustText}>
-                      Điều chỉnh vị trí: Giữ thẳng đầu, nhìn vào camera
-                    </Text>
+                    <Text style={styles.instructionText}>⚠️ Điều chỉnh vị trí khuôn mặt</Text>
+                  )}
+                  {faceDetected && canCapture && (
+                    <Text style={[styles.instructionText, { color: '#22c55e' }]}>✅ Đạt yêu cầu – đang tự ghi nhận...</Text>
+                  )}
+                </>
+              ) : (
+                <>
+                  {!faceDetected && (
+                    <Text style={styles.instructionText}>🔍 Đang tìm khuôn mặt...</Text>
+                  )}
+                  {faceDetected && !canCapture && (
+                    <Text style={styles.instructionText}>⚠️ Điều chỉnh vị trí khuôn mặt</Text>
                   )}
                   {canCapture && (
-                    <Text style={styles.readyText}>
-                      ✅ Sẵn sàng chụp ảnh! {autoCaptureEnabled ? '(Tự động)' : '(Thủ công)'}
-                    </Text>
+                    <Text style={styles.instructionText}>✅ Sẵn sàng! Nhấn ĐĂNG KÝ</Text>
                   )}
-                  
-                  {/* Auto Capture Toggle */}
-                  <TouchableOpacity 
-                    style={styles.autoToggle}
-                    onPress={() => setAutoCaptureEnabled(!autoCaptureEnabled)}
-                  >
-                    <Icon 
-                      name={autoCaptureEnabled ? "toggle-switch" : "toggle-switch-off"} 
-                      size={24} 
-                      color={autoCaptureEnabled ? "#22c55e" : "#94a3b8"} 
-                    />
-                    <Text style={[
-                      styles.autoToggleText,
-                      { color: autoCaptureEnabled ? "#22c55e" : "#94a3b8" }
-                    ]}>
-                      {autoCaptureEnabled ? "Tự động chụp" : "Chụp thủ công"}
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-              </Camera>
-            )}
+                </>
+              )}
+            </View>
           </View>
         </Modal>
       </SafeAreaView>
@@ -885,7 +2017,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 20,
-    zIndex: 1,
+    zIndex: 15,
   },
   closeBtn: {
     backgroundColor: 'rgba(0,0,0,0.5)',
@@ -909,10 +2041,10 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 20,
-    zIndex: 1,
+    zIndex: 15,
   },
   flipBtn: {
     backgroundColor: 'rgba(0,0,0,0.5)',
@@ -925,37 +2057,59 @@ const styles = StyleSheet.create({
     fontSize: 10,
     marginTop: 4,
   },
-  captureBtn: {
-    alignSelf: 'center',
+  registerBtn: {
+    backgroundColor: '#22c55e',
+    paddingHorizontal: 24,
+    paddingVertical: 16,
+    borderRadius: 25,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 3,
+    borderColor: 'rgba(255,255,255,0.8)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
   },
-  captureBtnDisabled: {
-    opacity: 0.5,
+  registerBtnDisabled: {
+    backgroundColor: '#94a3b8',
+    opacity: 0.6,
   },
-  captureInnerCircle: {
-    width: 70,
-    height: 70,
-    borderRadius: 35,
+  registerInnerCircle: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     backgroundColor: '#fff',
     justifyContent: 'center',
     alignItems: 'center',
-    borderWidth: 4,
-    borderColor: 'rgba(255,255,255,0.5)',
+    marginRight: 12,
   },
-  instructionContainer: {
-    position: 'absolute',
-    top: 120,
-    left: 20,
-    right: 20,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    borderRadius: 20,
-    padding: 12,
-    alignItems: 'center',
-    zIndex: 1,
-  },
-  instructionText: {
+  registerBtnText: {
     color: '#fff',
     fontSize: 16,
     fontWeight: 'bold',
+    textAlign: 'center',
+  },
+  instructionContainer: {
+    position: 'absolute',
+    bottom: 120,
+    left: 20,
+    right: 20,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    zIndex: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.3)',
+  },
+  instructionText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '600',
     textAlign: 'center',
   },
   capturingText: {
@@ -973,8 +2127,8 @@ const styles = StyleSheet.create({
   },
   waitingText: {
     color: '#fff',
-    fontSize: 16,
-    marginTop: 8,
+    fontSize: 12,
+    marginTop: 4,
     textAlign: 'center',
   },
   faceIndicator: {
@@ -999,16 +2153,38 @@ const styles = StyleSheet.create({
     textShadowRadius: 3,
   },
   adjustText: {
-    color: '#fbbf24',
-    fontSize: 14,
+    color: '#ffeb3b',
+    fontSize: 12,
+    marginTop: 4,
+    textAlign: 'center',
+    fontWeight: 'bold',
+    textShadowColor: 'rgba(0,0,0,0.8)',
+    textShadowOffset: { width: 1, height: 1 },
+    textShadowRadius: 2,
+  },
+  adjustmentContainer: {
+    alignItems: 'center',
     marginTop: 8,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#ffeb3b',
+  },
+  adjustSubText: {
+    color: '#fff',
+    fontSize: 14,
+    marginTop: 6,
     textAlign: 'center',
     fontWeight: '500',
+    textShadowColor: 'rgba(0,0,0,0.8)',
+    textShadowOffset: { width: 1, height: 1 },
+    textShadowRadius: 2,
   },
   readyText: {
     color: '#4ade80',
-    fontSize: 14,
-    marginTop: 8,
+    fontSize: 12,
+    marginTop: 4,
     textAlign: 'center',
     fontWeight: '600',
   },
@@ -1027,9 +2203,78 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    justifyContent: 'center',
+    zIndex: 5,
+  },
+  debugBounds: {
+    position: 'absolute',
+    top: 10,
+    left: 10,
+    backgroundColor: 'rgba(0,0,0,0.85)',
+    padding: 10,
+    borderRadius: 8,
+    zIndex: 20,
+    maxWidth: '85%',
+    maxHeight: '70%',
+  },
+  debugDock: {
+    position: 'absolute',
+    left: 10,
+    right: 10,
+    top: 20,
+    zIndex: 20,
+  },
+  debugHeader: {
+    flexDirection: 'row',
     alignItems: 'center',
-    zIndex: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)'
+  },
+  debugHeaderText: {
+    color: '#60a5fa',
+    fontSize: 13,
+    fontWeight: 'bold',
+    marginLeft: 6,
+  },
+  debugMiniText: {
+    color: '#cbd5e1',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  debugPanel: {
+    width: '100%',
+    backgroundColor: 'rgba(0,0,0,0.85)',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.15)'
+  },
+  debugBoundsTitle: {
+    color: '#60a5fa',
+    fontSize: 13,
+    fontWeight: 'bold',
+    marginBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.3)',
+    paddingBottom: 4,
+  },
+  debugBoundsSection: {
+    color: '#a78bfa',
+    fontSize: 11,
+    fontWeight: '600',
+    marginTop: 6,
+    marginBottom: 2,
+  },
+  debugBoundsText: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: '400',
+    marginBottom: 2,
+    fontFamily: 'monospace',
   },
   faceFrame: {
     borderRadius: 20,
@@ -1083,6 +2328,144 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     marginLeft: 8,
+  },
+  debugContainer: {
+    backgroundColor: 'rgba(0,0,0,0.85)',
+    borderRadius: 12,
+    padding: 12,
+    marginTop: 8,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
+  },
+  debugTitle: {
+    color: '#ffeb3b',
+    fontSize: 14,
+    fontWeight: 'bold',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  debugSubTitle: {
+    color: '#60a5fa',
+    fontSize: 12,
+    fontWeight: 'bold',
+    marginTop: 8,
+    marginBottom: 4,
+  },
+  debugText: {
+    color: '#fff',
+    fontSize: 11,
+    marginBottom: 3,
+    fontFamily: 'monospace',
+  },
+  statusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  statusIndicator: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    marginRight: 8,
+  },
+  centerFocus: {
+    position: 'absolute',
+    top: '50%',
+    left: '50%',
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginTop: -4,
+    marginLeft: -4,
+  },
+  frameStatusText: {
+    position: 'absolute',
+    top: -30,
+    left: '50%',
+    marginLeft: -30,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  frameStatusLabel: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: 'bold',
+    textAlign: 'center',
+  },
+  noFaceIndicator: {
+    position: 'absolute',
+    top: '50%',
+    left: '50%',
+    marginTop: -60,
+    marginLeft: -100,
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    padding: 20,
+    borderRadius: 20,
+    borderWidth: 2,
+    borderColor: '#ef4444',
+  },
+  noFaceIcon: {
+    marginBottom: 12,
+  },
+  noFaceText: {
+    color: '#ef4444',
+    fontSize: 16,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    marginBottom: 4,
+  },
+  noFaceSubText: {
+    color: '#fff',
+    fontSize: 12,
+    textAlign: 'center',
+  },
+  landmarkPoint: {
+    position: 'absolute',
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: '#fff',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.7,
+    shadowRadius: 3,
+    elevation: 5,
+  },
+  landmarkLabel: {
+    position: 'absolute',
+    top: 12,
+    left: -15,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    color: '#fff',
+    fontSize: 9,
+    paddingHorizontal: 4,
+    paddingVertical: 2,
+    borderRadius: 4,
+    fontWeight: '600',
+    minWidth: 40,
+    textAlign: 'center',
+  },
+  contourContainer: {
+    position: 'absolute',
+  },
+  contourPoint: {
+    position: 'absolute',
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#00ff00',
+    borderWidth: 1,
+    borderColor: '#fff',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.3,
+    shadowRadius: 1,
+    elevation: 2,
   },
 });
 

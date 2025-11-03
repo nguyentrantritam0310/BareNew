@@ -1,0 +1,77 @@
+{
+  "migIndex": 1,
+  "data": [
+    {
+      "path": "assets/fonts/Inter-Regular.ttf",
+      "sha1": "da39a3ee5e6b4b0d3255bfef95601890afd80709"
+    },
+    {
+      "path": "assets/fonts/Roboto-Regular.ttf",
+      "sha1": "da39a3ee5e6b4b0d3255bfef95601890afd80709"
+    },
+    {
+      "path": "assets/fonts/SpaceMono-Regular.ttf",
+      "sha1": "fae3a5a43b50e0408fd61e14383d94a023d332b0"
+    },
+    {
+      "path": "assets/facenet_512.tflite",
+      "sha1": "6310adde97470619d40fb8889e071b43b04e48e0"
+    },
+    {
+      "path": "assets/FACENET_MODEL_README.md",
+      "sha1": "c56e84e7e435c0c439c0ca7d42cea41d4af0bb35"
+    },
+    {
+      "path": "assets/images/adaptive-icon.png",
+      "sha1": "19b53640a95efdc2ccc7fc20f3ea4d0d381bb5c4"
+    },
+    {
+      "path": "assets/images/app-icon.svg",
+      "sha1": "f0c270a7673314530fa77f1256e56eb727e134f0"
+    },
+    {
+      "path": "assets/images/avatar.png",
+      "sha1": "4924b81c798b6aebb9e2587915f6dba93d5a0fc9"
+    },
+    {
+      "path": "assets/images/checkin.png",
+      "sha1": "be4bf9197f9d0c4d7246bb1a2205167d4c21e372"
+    },
+    {
+      "path": "assets/images/checkout.png",
+      "sha1": "1b52eb9e903982db9de107872a9cf66ad56d1389"
+    },
+    {
+      "path": "assets/images/favicon.png",
+      "sha1": "cb25ca74ddc488c91522b0ae68fc846fac7f4174"
+    },
+    {
+      "path": "assets/images/icon.png",
+      "sha1": "3f71f5a8458c06b83424cc33e1f2481f601199ea"
+    },
+    {
+      "path": "assets/images/map-placeholder.png",
+      "sha1": "da39a3ee5e6b4b0d3255bfef95601890afd80709"
+    },
+    {
+      "path": "assets/images/partial-react-logo.png",
+      "sha1": "0d7cb3af15a5b94c520596c096fa91bb1bf093eb"
+    },
+    {
+      "path": "assets/images/react-logo.png",
+      "sha1": "12f26a17774074ea98dd68ae1e531a9c7fa4e065"
+    },
+    {
+      "path": "assets/images/react-logo@2x.png",
+      "sha1": "9ed9f21bcd6d668be169753fc45091b795947731"
+    },
+    {
+      "path": "assets/images/react-logo@3x.png",
+      "sha1": "e5e7d9925fe3fda42b14a8378e54aea8338d6c0c"
+    },
+    {
+      "path": "assets/images/splash-icon.png",
+      "sha1": "19b53640a95efdc2ccc7fc20f3ea4d0d381bb5c4"
+    }
+  ]
+}

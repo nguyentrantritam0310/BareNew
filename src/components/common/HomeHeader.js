@@ -27,7 +27,7 @@ const HomeHeader = ({
         </View>
         
         <View style={styles.userInfoSection}>
-          <Text style={styles.hello}>Xin chào</Text>
+          <Text style={styles.hello}>Xin chào blef</Text>
           <Text style={styles.userName}>{userName}</Text>
         </View>
       </View>

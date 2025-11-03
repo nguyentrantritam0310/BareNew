@@ -11,7 +11,7 @@ import com.facebook.react.defaults.DefaultReactHost.getDefaultReactHost
 import com.facebook.react.defaults.DefaultReactNativeHost
 import com.facebook.react.soloader.OpenSourceMergedSoMapping
 import com.facebook.soloader.SoLoader
-// import com.swmansion.reanimated.ReanimatedPackage // Temporarily disabled due to Metro error
+import com.swmansion.reanimated.ReanimatedPackage
 
 class MainApplication : Application(), ReactApplication {
 
@@ -21,7 +21,8 @@ class MainApplication : Application(), ReactApplication {
             PackageList(this).packages.apply {
               // Packages that cannot be autolinked yet can be added manually here, for example:
               // add(MyReactNativePackage())
-              // add(ReanimatedPackage()) // Temporarily disabled due to Metro error
+              add(ReanimatedPackage())
+              add(AssetCopyPackage())
             }
 
         override fun getJSMainModuleName(): String = "index"
