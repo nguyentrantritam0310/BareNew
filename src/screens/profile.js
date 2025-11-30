@@ -56,6 +56,16 @@ export default function ProfileScreen() {
         throw new Error('Không tìm thấy thông tin nhân viên');
       }
 
+      // Debug: Log employee data structure
+      console.log('=== DEBUG: Loaded Employee Data ===');
+      console.log('Full userEmployee:', JSON.stringify(userEmployee, null, 2));
+      console.log('userEmployee.gender:', userEmployee.gender);
+      console.log('userEmployee.Gender:', userEmployee.Gender);
+      console.log('userEmployee.roleID:', userEmployee.roleID);
+      console.log('userEmployee.RoleID:', userEmployee.RoleID);
+      console.log('userEmployee.roleName:', userEmployee.roleName);
+      console.log('All keys:', Object.keys(userEmployee));
+
       // Find contract for current user
       const contract = contracts.find(c => 
         c.employeeID === user?.id || 
@@ -99,64 +109,111 @@ export default function ProfileScreen() {
     return `${year}-${month}-${day}`;
   };
 
-  const handleEditPress = () => {
+  const handleEditPress = async () => {
     if (!employeeData) return;
     
-    console.log('Employee data for edit:', employeeData);
+    console.log('=== DEBUG: Employee data for edit ===');
+    console.log('Full employeeData:', JSON.stringify(employeeData, null, 2));
+    console.log('employeeData.gender:', employeeData.gender);
+    console.log('employeeData.Gender:', employeeData.Gender);
+    console.log('employeeData.roleID:', employeeData.roleID);
+    console.log('employeeData.RoleID:', employeeData.RoleID);
+    console.log('employeeData.roleName:', employeeData.roleName);
+    console.log('All keys:', Object.keys(employeeData));
     
-    // Convert string status to number for form
-    let statusValue = '0';
-    if (typeof employeeData.status === 'string') {
-      switch (employeeData.status) {
-        case 'Active':
-          statusValue = '0';
-          break;
-        case 'Resigned':
-          statusValue = '1';
-          break;
-        case 'MaternityLeave':
-          statusValue = '2';
-          break;
-        default:
-          statusValue = '0';
-      }
-    } else {
-      statusValue = employeeData.status?.toString() ?? '0';
+    // Đảm bảo roles đã được load trước khi mở modal
+    if (roles.length === 0) {
+      await loadRoles();
     }
+    console.log('Available roles:', roles);
+    
+    // Fetch chi tiết employee từ API để lấy đầy đủ thông tin (gender, roleID)
+    let detailedEmployeeData = employeeData;
+    try {
+      console.log('Fetching detailed employee data for:', employeeData.id);
+      const detailResponse = await api.get(`/ApplicationUser/employee/${employeeData.id}`);
+      if (detailResponse.data) {
+        detailedEmployeeData = { ...employeeData, ...detailResponse.data };
+        console.log('Detailed employee data:', JSON.stringify(detailedEmployeeData, null, 2));
+      }
+    } catch (err) {
+      console.warn('Could not fetch detailed employee data, using basic data:', err.message);
+    }
+    
+    // Status luôn là 'Active' (không cho chỉnh sửa)
+    let statusValue = '0';
 
     // Extract name from employeeName if firstName/lastName not available
-    let firstName = employeeData.firstName || '';
-    let lastName = employeeData.lastName || '';
+    let firstName = detailedEmployeeData.firstName || detailedEmployeeData.FirstName || '';
+    let lastName = detailedEmployeeData.lastName || detailedEmployeeData.LastName || '';
     
-    if (!firstName && !lastName && employeeData.employeeName) {
-      const nameParts = employeeData.employeeName.split(' ');
+    if (!firstName && !lastName && detailedEmployeeData.employeeName) {
+      const nameParts = detailedEmployeeData.employeeName.split(' ');
       if (nameParts.length >= 2) {
         lastName = nameParts.slice(0, -1).join(' '); // All parts except last
         firstName = nameParts[nameParts.length - 1]; // Last part
       } else {
-        firstName = employeeData.employeeName;
+        firstName = detailedEmployeeData.employeeName;
       }
     }
 
-    // Use values directly like in Vue component
-    const genderValue = employeeData.gender || '';
-    const roleIDValue = employeeData.roleID || employeeData.RoleID || '';
+    // Map gender - kiểm tra cả camelCase và PascalCase
+    let genderValue = detailedEmployeeData.gender || detailedEmployeeData.Gender || '';
+    console.log('Raw gender value:', genderValue);
+    
+    // Map từ các format có thể có
+    if (genderValue === 'Male' || genderValue === 'male' || genderValue === 'MALE') {
+      genderValue = 'Nam';
+    } else if (genderValue === 'Female' || genderValue === 'female' || genderValue === 'FEMALE') {
+      genderValue = 'Nữ';
+    } else if (genderValue === 'Other' || genderValue === 'other' || genderValue === 'OTHER' || genderValue === 'Khác') {
+      genderValue = 'Khác';
+    }
+    // Nếu đã là "Nam", "Nữ", "Khác" thì giữ nguyên
+    console.log('Mapped gender value:', genderValue);
+    
+    // Map roleID - ưu tiên từ API, nếu không có thì map từ roleName
+    let roleIDValue = detailedEmployeeData.roleID || detailedEmployeeData.RoleID || detailedEmployeeData.roleId || detailedEmployeeData.role_id || '';
+    console.log('Raw roleID value from API:', roleIDValue);
+    
+    // Nếu không có roleID từ API, map từ roleName
+    if (!roleIDValue && detailedEmployeeData.roleName) {
+      const matchedRole = roles.find(role => {
+        const roleName = role.roleName || role.RoleName || role.name || '';
+        return roleName === detailedEmployeeData.roleName || 
+               roleName.trim() === detailedEmployeeData.roleName.trim();
+      });
+      
+      if (matchedRole) {
+        roleIDValue = String(matchedRole.id || matchedRole.ID || '');
+        console.log('Mapped roleID from roleName:', detailedEmployeeData.roleName, '->', roleIDValue);
+      } else {
+        console.warn('Could not find roleID for roleName:', detailedEmployeeData.roleName);
+      }
+    }
+    
+    // Convert to string để so sánh dễ dàng hơn
+    if (roleIDValue) {
+      roleIDValue = String(roleIDValue);
+    }
+    console.log('Final roleID value:', roleIDValue);
 
     const formData = {
       lastName: lastName,
       firstName: firstName,
-      birthday: formatDateForInput(employeeData.birthday),
-      joinDate: formatDateForInput(employeeData.joinDate),
-      phone: employeeData.phone ?? '',
-      email: employeeData.email ?? '',
+      birthday: formatDateForInput(detailedEmployeeData.birthday || detailedEmployeeData.Birthday),
+      joinDate: formatDateForInput(detailedEmployeeData.joinDate || detailedEmployeeData.JoinDate),
+      phone: detailedEmployeeData.phone || detailedEmployeeData.Phone || '',
+      email: detailedEmployeeData.email || detailedEmployeeData.Email || '',
       gender: genderValue,
       roleID: roleIDValue,
       status: statusValue
     };
     
-    console.log('Setting form data:', formData);
-    console.log('Original employee gender:', employeeData.gender, '-> Mapped to:', genderValue);
-    console.log('Original employee roleID:', employeeData.roleID, employeeData.RoleID, '-> Mapped to:', roleIDValue);
+    console.log('=== Final form data ===');
+    console.log('Form data:', JSON.stringify(formData, null, 2));
+    console.log('Gender in form:', formData.gender);
+    console.log('RoleID in form:', formData.roleID);
     
     setEditFormData(formData);
     setShowEditModal(true);
@@ -182,21 +239,8 @@ export default function ProfileScreen() {
         return;
       }
 
-      // Convert status back to string for API
-      let statusString = 'Active';
-      switch (editFormData.status) {
-        case '0':
-          statusString = 'Active';
-          break;
-        case '1':
-          statusString = 'Resigned';
-          break;
-        case '2':
-          statusString = 'MaternityLeave';
-          break;
-        default:
-          statusString = 'Active';
-      }
+      // Status luôn là 'Active' (không cho chỉnh sửa)
+      const statusString = 'Active';
 
       const updateData = {
         Id: employeeData.id,
@@ -331,17 +375,10 @@ export default function ProfileScreen() {
             <View style={styles.avatarCircle}>
               <Icon name="account" size={40} color="white" />
             </View>
-            <View style={[styles.statusIndicator, { backgroundColor: getEmployeeStatus(employeeData) ? '#28a745' : '#dc3545' }]} />
           </View>
           <View style={styles.profileInfo}>
             <Text style={styles.name}>{getEmployeeFullName(employeeData)}</Text>
             <Text style={styles.position}>{getRoleDisplayName(employeeData?.roleName)}</Text>
-            <View style={[styles.statusBadge, { backgroundColor: getEmployeeStatus(employeeData) ? '#d4edda' : '#f8d7da' }]}>
-              <Icon name="circle" size={8} color={getEmployeeStatus(employeeData) ? '#155724' : '#721c24'} />
-              <Text style={[styles.statusText, { color: getEmployeeStatus(employeeData) ? '#155724' : '#721c24' }]}>
-                {getEmployeeStatusText(employeeData)}
-              </Text>
-            </View>
           </View>
         </View>
 
@@ -560,9 +597,30 @@ export default function ProfileScreen() {
                     >
                       <Text style={styles.dropdownText}>
                         {(() => {
-                          console.log('Current gender value:', editFormData.gender);
-                          if (!editFormData.gender) return 'Chọn giới tính';
-                          return editFormData.gender; // Use value directly like Vue component
+                          const currentGender = editFormData.gender;
+                          console.log('=== DEBUG Gender Dropdown ===');
+                          console.log('Current gender in form:', currentGender);
+                          console.log('Type:', typeof currentGender);
+                          
+                          if (!currentGender || currentGender === '' || currentGender === null || currentGender === undefined) {
+                            return 'Chọn giới tính';
+                          }
+                          
+                          // Map lại nếu cần (xử lý cả lowercase và uppercase)
+                          let displayGender = String(currentGender).trim();
+                          const lowerGender = displayGender.toLowerCase();
+                          
+                          if (lowerGender === 'male' || displayGender === 'Male' || displayGender === 'MALE') {
+                            displayGender = 'Nam';
+                          } else if (lowerGender === 'female' || displayGender === 'Female' || displayGender === 'FEMALE') {
+                            displayGender = 'Nữ';
+                          } else if (lowerGender === 'other' || displayGender === 'Other' || displayGender === 'OTHER') {
+                            displayGender = 'Khác';
+                          }
+                          // Nếu đã là "Nam", "Nữ", "Khác" thì giữ nguyên
+                          
+                          console.log('Display gender:', displayGender);
+                          return displayGender;
                         })()}
                       </Text>
                       <Icon name="chevron-down" size={20} color="#666" />
@@ -637,56 +695,46 @@ export default function ProfileScreen() {
                     >
                       <Text style={styles.dropdownText}>
                         {(() => {
-                          console.log('Current roleID value:', editFormData.roleID);
-                          console.log('Available roles:', roles);
-                          if (!editFormData.roleID) return 'Chọn chức danh';
+                          const currentRoleID = editFormData.roleID;
+                          console.log('=== DEBUG Role Dropdown ===');
+                          console.log('Current roleID in form:', currentRoleID, 'Type:', typeof currentRoleID);
+                          console.log('Available roles:', JSON.stringify(roles, null, 2));
                           
-                          // Use loose equality like Vue component (role.id == editFormData.roleID)
-                          let selectedRole = roles?.find(role => 
-                            role.id == editFormData.roleID || 
-                            role.ID == editFormData.roleID
-                          );
+                          if (!currentRoleID || currentRoleID === '' || currentRoleID === null || currentRoleID === undefined) {
+                            console.log('No roleID found, showing placeholder');
+                            return 'Chọn chức danh';
+                          }
+                          
+                          // Convert roleID to string for comparison
+                          const roleIDStr = String(currentRoleID).trim();
+                          console.log('Looking for roleID:', roleIDStr);
+                          
+                          // Try multiple comparison methods
+                          let selectedRole = roles?.find(role => {
+                            const roleId = String(role.id || role.ID || role.roleId || role.role_id || '').trim();
+                            const roleIdNum = Number(role.id || role.ID || 0);
+                            const formRoleIdNum = Number(currentRoleID);
+                            
+                            console.log(`Comparing: roleId="${roleId}", roleIDStr="${roleIDStr}", roleIdNum=${roleIdNum}, formRoleIdNum=${formRoleIdNum}`);
+                            
+                            return roleId === roleIDStr || 
+                                   role.id == currentRoleID || 
+                                   role.ID == currentRoleID ||
+                                   roleIdNum === formRoleIdNum ||
+                                   String(role.id) === String(currentRoleID) ||
+                                   String(role.ID) === String(currentRoleID);
+                          });
                           
                           console.log('Found selected role:', selectedRole);
                           
                           if (selectedRole) {
-                            return selectedRole.roleName || selectedRole.RoleName || selectedRole.name || 'Unknown Role';
+                            const roleName = selectedRole.roleName || selectedRole.RoleName || selectedRole.name || 'Unknown Role';
+                            console.log('Display role name:', roleName);
+                            return roleName;
                           }
+                          
+                          console.log('No matching role found, showing placeholder');
                           return 'Chọn chức danh';
-                        })()}
-                      </Text>
-                      <Icon name="chevron-down" size={20} color="#666" />
-                    </TouchableOpacity>
-                  </View>
-                </View>
-                
-                <View style={styles.inputGroup}>
-                  <Text style={styles.inputLabel}>Trạng thái</Text>
-                  <View style={styles.dropdownContainer}>
-                    <TouchableOpacity
-                      style={styles.dropdownButton}
-                      onPress={() => {
-                        Alert.alert(
-                          'Chọn trạng thái',
-                          '',
-                          [
-                            { text: 'Đang làm việc', onPress: () => setEditFormData({...editFormData, status: '0'}) },
-                            { text: 'Nghỉ việc', onPress: () => setEditFormData({...editFormData, status: '1'}) },
-                            { text: 'Nghỉ thai sản', onPress: () => setEditFormData({...editFormData, status: '2'}) },
-                            { text: 'Hủy', style: 'cancel' }
-                          ]
-                        );
-                      }}
-                    >
-                      <Text style={styles.dropdownText}>
-                        {(() => {
-                          console.log('Current status value:', editFormData.status);
-                          switch (editFormData.status) {
-                            case '0': return 'Đang làm việc';
-                            case '1': return 'Nghỉ việc';
-                            case '2': return 'Nghỉ thai sản';
-                            default: return 'Chọn trạng thái';
-                          }
                         })()}
                       </Text>
                       <Icon name="chevron-down" size={20} color="#666" />
@@ -779,16 +827,6 @@ const styles = StyleSheet.create({
     shadowRadius: 16,
     elevation: 8,
   },
-  statusIndicator: {
-    position: 'absolute',
-    bottom: 10,
-    right: 10,
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    borderWidth: 3,
-    borderColor: 'white',
-  },
   profileInfo: {
     alignItems: 'center',
   },
@@ -805,19 +843,6 @@ const styles = StyleSheet.create({
     color: '#3498db',
     marginBottom: 12,
     textAlign: 'center',
-  },
-  statusBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 20,
-  },
-  statusText: {
-    marginLeft: 6,
-    fontSize: 12,
-    fontWeight: '600',
-    textTransform: 'uppercase',
   },
   quickStats: {
     backgroundColor: 'white',

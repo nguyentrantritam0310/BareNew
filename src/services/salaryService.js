@@ -3,19 +3,38 @@ import AsyncStorage from '@react-native-async-storage/async-storage'
 
 export const salaryService = {
   // Calculate personal salary data dynamically from multiple data sources
-  async getPersonalSalaryData(year, month) {
+  async getPersonalSalaryData(year, month, userId = null) {
     try {
-      // Get current user from AsyncStorage
-      const userString = await AsyncStorage.getItem('user')
-      if (!userString) {
-        throw new Error('Chưa đăng nhập')
+      // Get current user from AsyncStorage or use provided userId
+      let currentUser = null;
+      
+      if (userId) {
+        // Use provided userId
+        currentUser = { id: userId };
+      } else {
+        // Try to get from AsyncStorage
+        const userString = await AsyncStorage.getItem('user');
+        if (userString) {
+          currentUser = JSON.parse(userString);
+        } else {
+          // Try to get from token
+          const token = await AsyncStorage.getItem('token');
+          if (token) {
+            // Decode token to get user info (basic implementation)
+            try {
+              const payload = JSON.parse(atob(token.split('.')[1]));
+              currentUser = { id: payload.nameid || payload.sub || payload.userId };
+            } catch (e) {
+              console.error('Error decoding token:', e);
+            }
+          }
+        }
       }
       
-      const currentUser = JSON.parse(userString)
-      console.log('Current user from AsyncStorage:', currentUser)
+      console.log('Current user for salary:', currentUser);
       
       if (!currentUser || !currentUser.id) {
-        throw new Error('Không tìm thấy thông tin người dùng')
+        throw new Error('Chưa đăng nhập')
       }
 
       // Get all required data sources
@@ -64,8 +83,167 @@ export const salaryService = {
         throw new Error(`Không tìm thấy thông tin nhân viên với ID: ${currentUser.id}`)
       }
 
-      // Find contract for current user
-      const contract = contracts.find(c => c.employeeID === currentUser.id)
+      // Helper function to check if approveStatus indicates approved
+      const isApproved = (approveStatus) => {
+        if (!approveStatus) return false
+        // Check for string values
+        if (typeof approveStatus === 'string') {
+          return approveStatus === 'Đã duyệt' || approveStatus === 'Approved'
+        }
+        // Check for number values (ApproveStatusEnum.Approved = 2)
+        if (typeof approveStatus === 'number') {
+          return approveStatus === 2
+        }
+        return false
+      }
+
+      // Helper function to check if contract is indeterminate term
+      const isIndeterminateTermContract = (endDate) => {
+        if (!endDate || endDate === null || endDate === undefined || endDate === '') {
+          return true
+        }
+        
+        if (typeof endDate === 'string' && (
+          endDate.includes('0001-01-01') || 
+          endDate.startsWith('0001-')
+        )) {
+          return true
+        }
+        
+        try {
+          const date = new Date(endDate)
+          if (isNaN(date.getTime()) || date.getFullYear() <= 1 || date.getFullYear() < 1900) {
+            return true
+          }
+        } catch (error) {
+          return true
+        }
+        
+        return false
+      }
+
+      // Helper function to get all contracts active in a month for an employee
+      const getContractsInMonth = (employeeId, year, month) => {
+        const monthStartDate = new Date(year, month - 1, 1)
+        monthStartDate.setHours(0, 0, 0, 0)
+        const monthEndDate = new Date(year, month, 0)
+        monthEndDate.setHours(23, 59, 59, 999)
+
+        console.log('🔍 getContractsInMonth - Debug:', {
+          employeeId,
+          employeeIdType: typeof employeeId,
+          year,
+          month,
+          contractsCount: contracts.length,
+          contracts: contracts.map(c => ({
+            id: c.id,
+            employeeID: c.employeeID,
+            employeeIDType: typeof c.employeeID,
+            approveStatus: c.approveStatus,
+            approveStatusType: typeof c.approveStatus,
+            startDate: c.startDate,
+            endDate: c.endDate,
+            isIndeterminate: isIndeterminateTermContract(c.endDate)
+          }))
+        })
+
+        return contracts
+          .filter(contract => {
+            // So sánh employeeID bằng string để đảm bảo khớp
+            const contractEmployeeId = String(contract.employeeID || '')
+            const empId = String(employeeId || '')
+            
+            console.log('  📋 Checking contract:', {
+              contractId: contract.id,
+              contractEmployeeId,
+              empId,
+              match: contractEmployeeId === empId,
+              approveStatus: contract.approveStatus,
+              isApproved: isApproved(contract.approveStatus)
+            })
+            
+            if (contractEmployeeId !== empId) {
+              console.log('    ❌ Employee ID mismatch')
+              return false
+            }
+            
+            if (!isApproved(contract.approveStatus)) {
+              console.log('    ❌ Not approved:', contract.approveStatus)
+              return false
+            }
+
+            const contractStartDate = new Date(contract.startDate)
+            contractStartDate.setHours(0, 0, 0, 0)
+
+            // Contract must start before or on the last day of the month
+            if (contractStartDate > monthEndDate) {
+              console.log('    ❌ Contract starts after month end')
+              return false
+            }
+
+            // Contract must end after or on the first day of the month (or be indeterminate)
+            // Kiểm tra xem có phải hợp đồng không xác định thời hạn không
+            if (!isIndeterminateTermContract(contract.endDate)) {
+              const contractEndDate = new Date(contract.endDate)
+              contractEndDate.setHours(23, 59, 59, 999)
+              if (contractEndDate < monthStartDate) {
+                console.log('    ❌ Contract ends before month start')
+                return false
+              }
+            }
+            // If indeterminate term contract (no endDate or "0001-01-01"), it's always active
+
+            console.log('    ✅ Contract matches!')
+            return true
+          })
+          .sort((a, b) => {
+            // Sort by startDate
+            const dateA = new Date(a.startDate)
+            const dateB = new Date(b.startDate)
+            return dateA - dateB
+          })
+      }
+
+      // Get approved contracts active in the selected month
+      const contractsInMonth = getContractsInMonth(currentUser.id, year, month)
+      
+      console.log('📊 Found contracts in month:', contractsInMonth.length)
+      
+      if (contractsInMonth.length === 0) {
+        console.error('❌ No approved contracts found for employee', currentUser.id, 'in month', month, '/', year)
+        console.error('Available contracts:', contracts.map(c => ({
+          id: c.id,
+          employeeID: c.employeeID,
+          approveStatus: c.approveStatus,
+          startDate: c.startDate,
+          endDate: c.endDate
+        })))
+        throw new Error(`Không tìm thấy hợp đồng đã duyệt cho nhân viên trong tháng ${month}/${year}`)
+      }
+
+      // Use the first contract (or aggregate if multiple contracts)
+      // For now, use the first contract (similar to web version's first contract)
+      const contract = contractsInMonth[0]
+      
+      // Calculate contract period in month (giống logic trong payslip.js)
+      const contractPeriodStart = new Date(year, month - 1, 1)
+      contractPeriodStart.setHours(0, 0, 0, 0)
+      const contractPeriodEnd = new Date(year, month, 0)
+      contractPeriodEnd.setHours(23, 59, 59, 999)
+      
+      const contractStartDate = new Date(contract.startDate)
+      contractStartDate.setHours(0, 0, 0, 0)
+      
+      let contractEndDate
+      if (!isIndeterminateTermContract(contract.endDate)) {
+        contractEndDate = new Date(contract.endDate)
+        contractEndDate.setHours(23, 59, 59, 999)
+      } else {
+        contractEndDate = contractPeriodEnd
+      }
+      
+      const periodStart = contractStartDate > contractPeriodStart ? contractStartDate : contractPeriodStart
+      const periodEnd = contractEndDate < contractPeriodEnd ? contractEndDate : contractPeriodEnd
       
       // Find attendance data for current user in selected month/year
       const attendanceData = attendanceList.filter(att => 
@@ -99,13 +277,14 @@ export const salaryService = {
       
       const totalDays = uniqueWorkDays.size
 
-      // Calculate paid leave days
+      // Calculate paid leave days - CHỈ tính trong khoảng thời gian hợp đồng
       const approvedLeaveRequests = leaveRequests.filter(leave => {
+        if (!leave || !leave.startDateTime) return false
         const leaveStartDate = new Date(leave.startDateTime)
-        return leave.employeeID === currentUser.id &&
-               leaveStartDate.getMonth() + 1 === month &&
-               leaveStartDate.getFullYear() === year &&
-               (leave.approveStatus === 'Đã duyệt' || leave.approveStatus === 'Approved') &&
+        const leaveEndDate = new Date(leave.endDateTime)
+        return String(leave.employeeID) === String(currentUser.id) &&
+               leaveStartDate <= periodEnd && leaveEndDate >= periodStart &&
+               (leave.approveStatus === 'Đã duyệt' || leave.approveStatus === 'Approved' || leave.approveStatus === 2) &&
                leave.leaveTypeName && leave.leaveTypeName.toLowerCase().includes('phép')
       })
       
@@ -113,18 +292,35 @@ export const salaryService = {
       approvedLeaveRequests.forEach(leave => {
         const startDate = new Date(leave.startDateTime)
         const endDate = new Date(leave.endDateTime)
-        const daysDiff = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24)) + 1
+        
+        // Chỉ tính phần thời gian nằm trong khoảng thời gian hợp đồng
+        const actualStart = startDate > periodStart ? startDate : periodStart
+        const actualEnd = endDate < periodEnd ? endDate : periodEnd
+        
+        if (actualStart > actualEnd) {
+          // Không có phần nào nằm trong period, bỏ qua
+          return
+        }
+        
+        // Tính số ngày nghỉ phép: đếm số ngày, không tính từ giờ
+        // Chỉ tính phần trong period
+        const periodStartDay = new Date(actualStart.getFullYear(), actualStart.getMonth(), actualStart.getDate())
+        const periodEndDay = new Date(actualEnd.getFullYear(), actualEnd.getMonth(), actualEnd.getDate())
+        
+        // Đếm số ngày nghỉ (chỉ trong period)
+        const daysDiff = Math.ceil((periodEndDay - periodStartDay) / (1000 * 60 * 60 * 24)) + 1
         totalPaidLeaveDays += daysDiff
       })
 
-      // Calculate overtime
+      // Calculate overtime - CHỈ tính trong khoảng thời gian hợp đồng
       const approvedOvertimeForMonth = overtimeRequests.filter(ot => {
         if (!ot || !ot.startDateTime) return false
         const start = new Date(ot.startDateTime)
-        const isSameMonth = (start.getFullYear() === year) && (start.getMonth() + 1 === month)
+        const end = new Date(ot.endDateTime)
         const isApproved = ot.approveStatus === 'Đã duyệt' || ot.approveStatus === 'Approved' || ot.approveStatus === 2
         const employeeMatch = ot.employeeID === currentUser.id
-        return isSameMonth && isApproved && employeeMatch
+        // Kiểm tra xem đơn tăng ca có nằm trong khoảng thời gian của hợp đồng không
+        return start <= periodEnd && end >= periodStart && isApproved && employeeMatch
       })
 
       let totalOvertimeHours = 0
@@ -134,7 +330,18 @@ export const salaryService = {
       approvedOvertimeForMonth.forEach(ot => {
         const start = new Date(ot.startDateTime)
         const end = new Date(ot.endDateTime)
-        const hours = Math.max(0, (end - start) / (1000 * 60 * 60))
+        
+        // Chỉ tính phần thời gian nằm trong khoảng thời gian hợp đồng
+        const actualStart = start > periodStart ? start : periodStart
+        const actualEnd = end < periodEnd ? end : periodEnd
+        
+        if (actualStart > actualEnd) {
+          // Không có phần nào nằm trong period, bỏ qua
+          return
+        }
+        
+        // Tính số giờ tăng ca (chỉ tính phần trong period)
+        const hours = Math.max(0, (actualEnd - actualStart) / (1000 * 60 * 60))
         const dayUnits = hours / 8
         const coeff = Number(ot.coefficient) || 1
         
@@ -274,10 +481,25 @@ export const salaryService = {
         userEmployee
       })
 
+      // Format contract period string
+      const formatContractPeriod = (startDate, endDate) => {
+        if (!startDate || !endDate) return '-'
+        const start = new Date(startDate)
+        const end = new Date(endDate)
+        const startStr = `${String(start.getDate()).padStart(2, '0')}/${String(start.getMonth() + 1).padStart(2, '0')}`
+        const endStr = `${String(end.getDate()).padStart(2, '0')}/${String(end.getMonth() + 1).padStart(2, '0')}`
+        return `${startStr} - ${endStr}`
+      }
+
       return {
         empId: userEmployee.id,
         empName,
         title,
+        contractNumber: contract?.contractNumber || '-',
+        contractPeriod: contract?.startDate && contract?.endDate 
+          ? formatContractPeriod(contract.startDate, contract.endDate)
+          : (contract?.startDate ? formatContractPeriod(contract.startDate, contract.endDate || new Date()) : '-'),
+        contractType: contract?.contractTypeName || 'Không xác định',
         contractSalary,
         insuranceSalary,
         totalContractSalary: contractSalary + insuranceSalary,

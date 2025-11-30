@@ -132,12 +132,12 @@ export const useLeaveRequest = () => {
   /**
    * Gửi đơn nghỉ phép để duyệt
    */
-  const submitForApproval = useCallback(async (voucherCode) => {
+  const submitForApproval = useCallback(async (voucherCode, notes) => {
     try {
       setLoading(true);
       setError(null);
-      console.log('Submitting leave request for approval:', voucherCode);
-      const data = await leaveService.submitForApproval(voucherCode);
+      console.log('Submitting leave request for approval:', voucherCode, 'with notes:', notes);
+      const data = await leaveService.submitForApproval(voucherCode, notes);
       
       // Cập nhật trong danh sách
       setLeaveRequests(prev => 
@@ -161,12 +161,12 @@ export const useLeaveRequest = () => {
   /**
    * Duyệt đơn nghỉ phép
    */
-  const approveLeaveRequest = useCallback(async (voucherCode, action) => {
+  const approveLeaveRequest = useCallback(async (voucherCode, action, notes) => {
     try {
       setLoading(true);
       setError(null);
-      console.log('Approving leave request:', voucherCode, 'with action:', action);
-      const data = await leaveService.approveLeaveRequest(voucherCode, action);
+      console.log('Approving leave request:', voucherCode, 'with action:', action, 'and notes:', notes);
+      const data = await leaveService.approveLeaveRequest(voucherCode, action, notes);
       
       // Cập nhật trong danh sách
       let newStatus;

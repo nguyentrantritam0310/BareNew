@@ -18,14 +18,32 @@ import { useLeaveRequest } from '../../composables/useLeaveRequest';
 import { useLeaveType } from '../../composables/useLeaveType';
 import { useEmployee } from '../../composables/useEmployee';
 import { useWorkShift } from '../../composables/useWorkShift';
-import CustomHeader from '../../components/CustomHeader';
+import { useOvertimeRequest } from '../../composables/useOvertimeRequest';
+import { useOvertimeForm } from '../../composables/useOvertimeForm';
+import { useAuth } from '../../contexts/AuthContext';
+import { useMemo, useCallback } from 'react';
+ import CustomHeader from '../../components/CustomHeader';
+import { 
+  getShiftAssignmentsByDateRange, 
+  validateAllDaysHaveShifts, 
+  checkOverlappingLeaveRequests,
+  formatDateForAPI 
+} from '../../utils/leaveFormHelpers';
+import {
+  checkOverlappingOvertimeRequests,
+  checkOverlappingShiftTimes
+} from '../../utils/overtimeOverlapHelpers';
+import { ScrollView as RNScrollView } from 'react-native';
 
 export default function AddLeaveScreen() {
   const navigation = useNavigation();
-  const { createLeaveRequest, loading: leaveLoading } = useLeaveRequest();
+  const { user, isDirector, isHRManager, isHREmployee } = useAuth();
+  const { createLeaveRequest, fetchLeaveRequests, leaveRequests, loading: leaveLoading } = useLeaveRequest();
   const { leaveTypes, fetchLeaveTypes, loading: leaveTypeLoading } = useLeaveType();
   const { employees, fetchAllEmployees, loading: employeeLoading } = useEmployee();
   const { workShifts, fetchWorkShifts, loading: workShiftLoading } = useWorkShift();
+  const { overtimeRequests, fetchOvertimeRequests } = useOvertimeRequest();
+  const { overtimeForms, fetchOvertimeForms } = useOvertimeForm();
 
   // Form state
   const [formData, setFormData] = useState({
@@ -52,24 +70,210 @@ export default function AddLeaveScreen() {
   const [tempEndTime, setTempEndTime] = useState(new Date());
   const [errors, setErrors] = useState({});
   const [submitting, setSubmitting] = useState(false);
+  
+  // Available work shifts based on shift assignments
+  const [availableWorkShifts, setAvailableWorkShifts] = useState([]);
+  const [loadingShiftAssignments, setLoadingShiftAssignments] = useState(false);
+  const [shiftAssignmentsInRange, setShiftAssignmentsInRange] = useState([]);
+  
+  // Overlap confirmation modal state
+  const [showOverlapModal, setShowOverlapModal] = useState(false);
+  const [overlappingRequests, setOverlappingRequests] = useState([]);
+  const [overlappingOvertimeRequests, setOverlappingOvertimeRequests] = useState([]);
+  const [overlappingShiftTimes, setOverlappingShiftTimes] = useState([]);
+  const [overlapModalType, setOverlapModalType] = useState(''); // 'leave', 'overtime', 'shift', or combinations
+  const [pendingSubmitData, setPendingSubmitData] = useState(null);
+
+  // Filter employees based on user role
+  const availableEmployees = useMemo(() => {
+    const userRole = user?.role;
+    const userId = user?.id;
+
+    if (!userId || !employees || employees.length === 0) {
+      return employees || [];
+    }
+
+    // Director, HR Manager, HR Employee: all employees
+    if (isDirector() || isHRManager() || isHREmployee()) {
+      return employees;
+    }
+
+    // Manager (Chỉ huy công trình): self + workers
+    if (userRole === 'manager' || userRole === 'MANAGER' || userRole === '2') {
+      return employees.filter(emp => {
+        // Self
+        if (emp.id === userId || String(emp.id) === String(userId)) {
+          return true;
+        }
+
+        // Check if worker (check by roleName or role)
+        const roleName = emp.roleName || emp.role || '';
+        const roleNameLower = roleName.toLowerCase();
+        const isWorker = roleNameLower.includes('thợ') ||
+          roleNameLower.includes('worker') ||
+          emp.role === 'worker' ||
+          emp.role === 'WORKER' ||
+          roleName === 'Nhân viên thợ' ||
+          userRole === 'worker' ||
+          userRole === 'WORKER';
+
+        return isWorker;
+      });
+    }
+
+    // Technician/Worker: only self
+    if (['technician', 'worker', 'TECHNICIAN', 'WORKER', '4', '1'].includes(userRole)) {
+      return employees.filter(emp => 
+        emp.id === userId || String(emp.id) === String(userId)
+      );
+    }
+
+    // Default: return all (fallback)
+    return employees;
+  }, [employees, user, isDirector, isHRManager, isHREmployee]);
+
+  // Check if user is restricted (technician/worker)
+  const isRestrictedUser = useMemo(() => {
+    const userRole = user?.role;
+    return ['technician', 'worker', 'TECHNICIAN', 'WORKER', '4', '1'].includes(userRole);
+  }, [user]);
 
   // Load data on mount
   useEffect(() => {
     loadInitialData();
   }, []);
 
+  // Auto-set employeeID for restricted users on mount
+  useEffect(() => {
+    if (isRestrictedUser && user?.id && !formData.employeeID) {
+      setFormData(prev => ({ ...prev, employeeID: user.id }));
+    }
+  }, [isRestrictedUser, user?.id]);
+
   const loadInitialData = async () => {
     try {
       await Promise.all([
         fetchLeaveTypes(),
         fetchAllEmployees(),
-        fetchWorkShifts()
+        fetchWorkShifts(),
+        fetchLeaveRequests(), // Load leave requests for overlap checking
+        fetchOvertimeRequests(), // Load overtime requests for overlap checking
+        fetchOvertimeForms() // Load overtime forms for overlap display
       ]);
     } catch (error) {
-      console.error('Error loading initial data:', error);
       Alert.alert('Lỗi', 'Không thể tải dữ liệu khởi tạo');
     }
   };
+  
+  // Function to fetch shift assignments and filter available work shifts
+  const fetchAvailableWorkShifts = useCallback(async () => {
+    // Reset available work shifts
+    setAvailableWorkShifts([]);
+    setShiftAssignmentsInRange([]);
+    setErrors(prev => ({ ...prev, workShiftID: '' }));
+    
+    // Check if we have all required fields
+    if (!formData.employeeID || !formData.startDateTime || !formData.endDateTime) {
+      return;
+    }
+    
+    try {
+      setLoadingShiftAssignments(true);
+      
+      // Parse dates
+      const startDate = new Date(formData.startDateTime);
+      const endDate = new Date(formData.endDateTime);
+      
+      if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+        return;
+      }
+      
+      const startDateStr = formatDateForAPI(startDate);
+      const endDateStr = formatDateForAPI(endDate);
+      
+      // Fetch shift assignments in date range
+      const assignments = await getShiftAssignmentsByDateRange(startDateStr, endDateStr);
+      
+      // Filter assignments for the selected employee
+      const employeeAssignments = assignments.filter(assignment => 
+        assignment.employeeID === formData.employeeID ||
+        String(assignment.employeeID) === String(formData.employeeID)
+      );
+      
+      setShiftAssignmentsInRange(employeeAssignments);
+      
+      // Validate that all days in the range have shift assignments
+      const validation = validateAllDaysHaveShifts(startDate, endDate, employeeAssignments);
+      if (!validation.valid) {
+        setAvailableWorkShifts([]);
+        setErrors(prev => ({
+          ...prev,
+          workShiftID: `Không có ca làm việc được phân cho ngày ${validation.missingDate.toLocaleDateString('vi-VN')}. Vui lòng phân ca cho tất cả các ngày trong khoảng thời gian.`
+        }));
+        if (formData.workShiftID) {
+          setFormData(prev => ({ ...prev, workShiftID: '' }));
+        }
+        return;
+      }
+      
+      // Get unique work shift IDs from assignments
+      const assignedShiftIds = new Set(
+        employeeAssignments.map(assignment => assignment.workShiftID)
+      );
+      
+      // Filter workshifts to only include assigned ones
+      const filteredShifts = workShifts.filter(shift => 
+        assignedShiftIds.has(shift.id)
+      );
+      setAvailableWorkShifts(filteredShifts);
+      
+      // If current workShiftID is not in available shifts, clear it
+      if (formData.workShiftID && !assignedShiftIds.has(parseInt(formData.workShiftID))) {
+        setFormData(prev => ({ ...prev, workShiftID: '' }));
+        setErrors(prev => ({
+          ...prev,
+          workShiftID: 'Ca làm việc này không được phân cho nhân viên trong khoảng thời gian đã chọn'
+        }));
+      }
+    } catch (error) {
+      console.error('Error fetching shift assignments:', error);
+      setAvailableWorkShifts([]);
+      setErrors(prev => ({
+        ...prev,
+        workShiftID: 'Lỗi khi tải danh sách ca làm việc'
+      }));
+    } finally {
+      setLoadingShiftAssignments(false);
+    }
+  }, [formData.employeeID, formData.startDateTime, formData.endDateTime, formData.workShiftID, workShifts]);
+  
+  // Computed property for work shifts to display
+  const displayWorkShifts = useMemo(() => {
+    // If we have employee, start date, and end date, show only available shifts
+    if (formData.employeeID && formData.startDateTime && formData.endDateTime) {
+      return availableWorkShifts;
+    }
+    // Otherwise, show all work shifts
+    return workShifts;
+  }, [formData.employeeID, formData.startDateTime, formData.endDateTime, availableWorkShifts, workShifts]);
+  
+  // Watch for changes in employeeID, startDateTime, endDateTime to fetch available work shifts
+  useEffect(() => {
+    if (formData.employeeID && formData.startDateTime && formData.endDateTime) {
+      // Debounce to avoid too many API calls
+      const timer = setTimeout(() => {
+        fetchAvailableWorkShifts();
+      }, 300);
+      return () => clearTimeout(timer);
+    } else {
+      // Reset available work shifts if any required field is missing
+      setAvailableWorkShifts([]);
+      setShiftAssignmentsInRange([]);
+      if (!formData.employeeID || !formData.startDateTime || !formData.endDateTime) {
+        setFormData(prev => ({ ...prev, workShiftID: '' }));
+      }
+    }
+  }, [formData.employeeID, formData.startDateTime, formData.endDateTime, fetchAvailableWorkShifts]);
 
   const validateForm = () => {
     const newErrors = {};
@@ -134,46 +338,152 @@ export default function AddLeaveScreen() {
       return;
     }
 
+    // Chuẩn bị dữ liệu theo format của Vue form
+    const submitData = {
+      voucherCode: formData.voucherCode,
+      employeeID: formData.employeeID,
+      leaveTypeID: formData.leaveTypeID,
+      workShiftID: formData.workShiftID,
+      startDateTime: new Date(formData.startDateTime).toISOString(),
+      endDateTime: new Date(formData.endDateTime).toISOString(),
+      reason: formData.reason
+    };
+    
+    try {
+      // Check for overlapping overtime requests first (blocks creation)
+      const overtimeOverlaps = checkOverlappingOvertimeRequests(
+        formData.startDateTime,
+        formData.endDateTime,
+        formData.employeeID,
+        overtimeRequests,
+        overtimeForms
+      );
+      
+      // Check for overlapping shift times with attendance data (blocks creation)
+      const shiftOverlaps = await checkOverlappingShiftTimes(
+        formData.startDateTime,
+        formData.endDateTime,
+        formData.employeeID,
+        employees,
+        leaveRequests,
+        workShifts
+      );
+      
+      // Check for overlapping leave requests (allows confirmation)
+      const leaveOverlaps = checkOverlappingLeaveRequests(
+        formData.startDateTime,
+        formData.endDateTime,
+        formData.employeeID,
+        leaveRequests
+      );
+      
+      // If there are overtime or shift overlaps, block creation
+      if (overtimeOverlaps.length > 0 || shiftOverlaps.length > 0) {
+        // Store all overlaps for display
+        setOverlappingOvertimeRequests(overtimeOverlaps);
+        setOverlappingShiftTimes(shiftOverlaps);
+        setOverlappingRequests(leaveOverlaps);
+        
+        // Determine modal type
+        const hasOvertime = overtimeOverlaps.length > 0;
+        const hasShift = shiftOverlaps.length > 0;
+        const hasLeave = leaveOverlaps.length > 0;
+        
+        if (hasOvertime && hasShift && hasLeave) {
+          setOverlapModalType('all');
+        } else if (hasOvertime && hasShift) {
+          setOverlapModalType('overtime-shift');
+        } else if (hasOvertime && hasLeave) {
+          setOverlapModalType('overtime-leave');
+        } else if (hasShift && hasLeave) {
+          setOverlapModalType('shift-leave');
+        } else if (hasOvertime) {
+          setOverlapModalType('overtime');
+        } else if (hasShift) {
+          setOverlapModalType('shift');
+        }
+        
+        // Show modal (no confirm button - blocks creation)
+        setShowOverlapModal(true);
+        return;
+      }
+      
+      // If only leave overlaps, show confirmation modal (allows creation after confirmation)
+      if (leaveOverlaps.length > 0) {
+        setPendingSubmitData(submitData);
+        setOverlappingRequests(leaveOverlaps);
+        setOverlappingOvertimeRequests([]);
+        setOverlappingShiftTimes([]);
+        setOverlapModalType('leave');
+        setShowOverlapModal(true);
+        return;
+      }
+      
+      // No overlaps, submit directly
+      await doSubmit(submitData);
+    } catch (error) {
+      console.error('Error checking overlaps:', error);
+      // If error occurs, still allow submission (fallback)
+      await doSubmit(submitData);
+    }
+  };
+  
+  const doSubmit = async (submitData) => {
     setSubmitting(true);
     try {
-      // Chuẩn bị dữ liệu theo format của Vue form
-      const submitData = {
-        voucherCode: formData.voucherCode,
-        employeeID: formData.employeeID,
-        leaveTypeID: formData.leaveTypeID,
-        workShiftID: formData.workShiftID,
-        startDateTime: new Date(formData.startDateTime).toISOString(),
-        endDateTime: new Date(formData.endDateTime).toISOString(),
-        reason: formData.reason
-      };
-
-      console.log('Form Data:', formData);
-      console.log('Submit Data:', submitData);
-      console.log('Start DateTime:', formData.startDateTime);
-      console.log('End DateTime:', formData.endDateTime);
-
       await createLeaveRequest(submitData);
       Alert.alert('Thành công', 'Tạo đơn nghỉ phép thành công', [
         { text: 'OK', onPress: () => navigation.goBack() }
       ]);
     } catch (error) {
-      console.error('Error creating leave request:', error);
-      console.error('Error response:', error.response?.data);
-      console.error('Error status:', error.response?.status);
       Alert.alert('Lỗi', `Không thể tạo đơn nghỉ phép: ${error.response?.data?.message || error.message}`);
     } finally {
       setSubmitting(false);
     }
   };
+  
+  
+  const handleOverlapCancel = () => {
+    setShowOverlapModal(false);
+    setPendingSubmitData(null);
+    setOverlappingRequests([]);
+    setOverlappingOvertimeRequests([]);
+    setOverlappingShiftTimes([]);
+    setOverlapModalType('');
+  };
+  
+  const handleOverlapConfirm = async () => {
+    if (pendingSubmitData) {
+      await doSubmit(pendingSubmitData);
+      setShowOverlapModal(false);
+      setPendingSubmitData(null);
+      setOverlappingRequests([]);
+      setOverlappingOvertimeRequests([]);
+      setOverlappingShiftTimes([]);
+      setOverlapModalType('');
+    }
+  };
 
   const formatDate = (date) => {
     if (!date) return '';
-    return new Date(date).toLocaleDateString('vi-VN');
+    try {
+      const dateObj = new Date(date);
+      if (isNaN(dateObj.getTime())) return '';
+      return dateObj.toLocaleDateString('vi-VN');
+    } catch {
+      return '';
+    }
   };
 
   const formatDateTime = (date) => {
     if (!date) return '';
-    return new Date(date).toLocaleString('vi-VN');
+    try {
+      const dateObj = new Date(date);
+      if (isNaN(dateObj.getTime())) return '';
+      return dateObj.toLocaleString('vi-VN');
+    } catch {
+      return '';
+    }
   };
 
   const handleStartDateChange = (event, selectedDate) => {
@@ -229,20 +539,11 @@ export default function AddLeaveScreen() {
   };
 
   const handleStartTimeChange = (event, selectedTime) => {
-    console.log('handleStartTimeChange - event:', event);
-    console.log('handleStartTimeChange - selectedTime:', selectedTime);
-    
     if (selectedTime) {
-      console.log('Setting tempStartTime to:', selectedTime);
-      console.log('Selected time hours:', selectedTime.getHours());
-      console.log('Selected time minutes:', selectedTime.getMinutes());
       setTempStartTime(selectedTime);
     }
     
-    // Nếu user bấm OK trên Android, tự động confirm
     if (event && event.type === 'set') {
-      console.log('User pressed OK, confirming start date time');
-      // Sử dụng setTimeout để đảm bảo state được cập nhật trước khi confirm
       setTimeout(() => {
         confirmStartDateTime();
       }, 100);
@@ -250,20 +551,11 @@ export default function AddLeaveScreen() {
   };
 
   const handleEndTimeChange = (event, selectedTime) => {
-    console.log('handleEndTimeChange - event:', event);
-    console.log('handleEndTimeChange - selectedTime:', selectedTime);
-    
     if (selectedTime) {
-      console.log('Setting tempEndTime to:', selectedTime);
-      console.log('Selected time hours:', selectedTime.getHours());
-      console.log('Selected time minutes:', selectedTime.getMinutes());
       setTempEndTime(selectedTime);
     }
     
-    // Nếu user bấm OK trên Android, tự động confirm
     if (event && event.type === 'set') {
-      console.log('User pressed OK, confirming end date time');
-      // Sử dụng setTimeout để đảm bảo state được cập nhật trước khi confirm
       setTimeout(() => {
         confirmEndDateTime();
       }, 100);
@@ -271,33 +563,18 @@ export default function AddLeaveScreen() {
   };
 
   const confirmStartDateTime = () => {
-    console.log('confirmStartDateTime called');
-    console.log('tempStartDate:', tempStartDate);
-    console.log('tempStartTime:', tempStartTime);
-    
-    // Sử dụng callback để đảm bảo có state mới nhất
     setTempStartTime(currentTempStartTime => {
-      console.log('Current tempStartTime in callback:', currentTempStartTime);
-      
-      // Kết hợp ngày và giờ
       const combinedDateTime = new Date(tempStartDate);
       combinedDateTime.setHours(currentTempStartTime.getHours());
       combinedDateTime.setMinutes(currentTempStartTime.getMinutes());
       combinedDateTime.setSeconds(0);
       combinedDateTime.setMilliseconds(0);
       
-      console.log('Combined DateTime:', combinedDateTime);
-      console.log('Combined DateTime Hours:', combinedDateTime.getHours());
-      console.log('Combined DateTime Minutes:', combinedDateTime.getMinutes());
-      console.log('ISO String:', combinedDateTime.toISOString());
-      
       setFormData(prev => ({ ...prev, startDateTime: combinedDateTime.toISOString() }));
       
-      // Đóng modal
       setTimeout(() => {
         setShowStartDatePicker(false);
         setShowStartTimePicker(false);
-        console.log('Start DateTime modal closed');
       }, 100);
       
       return currentTempStartTime;
@@ -305,33 +582,18 @@ export default function AddLeaveScreen() {
   };
 
   const confirmEndDateTime = () => {
-    console.log('confirmEndDateTime called');
-    console.log('tempEndDate:', tempEndDate);
-    console.log('tempEndTime:', tempEndTime);
-    
-    // Sử dụng callback để đảm bảo có state mới nhất
     setTempEndTime(currentTempEndTime => {
-      console.log('Current tempEndTime in callback:', currentTempEndTime);
-      
-      // Kết hợp ngày và giờ
       const combinedDateTime = new Date(tempEndDate);
       combinedDateTime.setHours(currentTempEndTime.getHours());
       combinedDateTime.setMinutes(currentTempEndTime.getMinutes());
       combinedDateTime.setSeconds(0);
       combinedDateTime.setMilliseconds(0);
       
-      console.log('Combined DateTime:', combinedDateTime);
-      console.log('Combined DateTime Hours:', combinedDateTime.getHours());
-      console.log('Combined DateTime Minutes:', combinedDateTime.getMinutes());
-      console.log('ISO String:', combinedDateTime.toISOString());
-      
       setFormData(prev => ({ ...prev, endDateTime: combinedDateTime.toISOString() }));
       
-      // Đóng modal
       setTimeout(() => {
         setShowEndDatePicker(false);
         setShowEndTimePicker(false);
-        console.log('End DateTime modal closed');
       }, 100);
       
       return currentTempEndTime;
@@ -394,7 +656,7 @@ export default function AddLeaveScreen() {
                 placeholder="Nhập số phiếu"
               />
               <TouchableOpacity style={styles.generateBtn} onPress={handleGenerateVoucherCode}>
-                <Icon name="refresh" size={20} color="#008080" />
+                <Icon name="refresh" size={20} color="#3498db" />
               </TouchableOpacity>
             </View>
             {errors.voucherCode && <Text style={styles.errorText}>{errors.voucherCode}</Text>}
@@ -404,16 +666,23 @@ export default function AddLeaveScreen() {
           <View style={styles.inputGroup}>
             <Text style={styles.label}>Nhân viên <Text style={styles.required}>*</Text></Text>
             <TouchableOpacity 
-              style={styles.selectContainer}
-              onPress={() => setShowEmployeeModal(true)}
+              style={[
+                styles.selectContainer,
+                isRestrictedUser && styles.selectContainerDisabled
+              ]}
+              onPress={() => !isRestrictedUser && setShowEmployeeModal(true)}
+              disabled={isRestrictedUser}
             >
-              <Text style={styles.selectText}>
+              <Text style={[
+                styles.selectText,
+                isRestrictedUser && styles.selectTextDisabled
+              ]}>
                 {formData.employeeID 
-                  ? employees.find(emp => emp.id === formData.employeeID)?.employeeName || 'Chọn nhân viên'
+                  ? availableEmployees.find(emp => emp.id === formData.employeeID)?.employeeName || 'Chọn nhân viên'
                   : 'Chọn nhân viên'
                 }
               </Text>
-              <Icon name="chevron-down" size={20} color="#666" />
+              {!isRestrictedUser && <Icon name="chevron-down" size={20} color="#666" />}
             </TouchableOpacity>
             {errors.employeeID && <Text style={styles.errorText}>{errors.employeeID}</Text>}
           </View>
@@ -440,18 +709,40 @@ export default function AddLeaveScreen() {
           <View style={styles.inputGroup}>
             <Text style={styles.label}>Ca làm việc <Text style={styles.required}>*</Text></Text>
             <TouchableOpacity 
-              style={styles.selectContainer}
-              onPress={() => setShowWorkShiftModal(true)}
+              style={[
+                styles.selectContainer,
+                (!formData.employeeID || !formData.startDateTime || !formData.endDateTime || loadingShiftAssignments) && styles.selectContainerDisabled
+              ]}
+              onPress={() => {
+                if (formData.employeeID && formData.startDateTime && formData.endDateTime && !loadingShiftAssignments) {
+                  setShowWorkShiftModal(true);
+                }
+              }}
+              disabled={!formData.employeeID || !formData.startDateTime || !formData.endDateTime || loadingShiftAssignments}
             >
-              <Text style={styles.selectText}>
-                {formData.workShiftID 
-                  ? workShifts.find(shift => shift.id === formData.workShiftID)?.shiftName || 'Chọn ca làm việc'
+              <Text style={[
+                styles.selectText,
+                (!formData.employeeID || !formData.startDateTime || !formData.endDateTime || loadingShiftAssignments) && styles.selectTextDisabled
+              ]}>
+                {loadingShiftAssignments 
+                  ? 'Đang tải...'
+                  : !formData.employeeID || !formData.startDateTime || !formData.endDateTime
+                  ? 'Vui lòng chọn nhân viên, từ ngày và đến ngày trước'
+                  : formData.workShiftID 
+                  ? displayWorkShifts.find(shift => shift.id === formData.workShiftID)?.shiftName || 'Chọn ca làm việc'
                   : 'Chọn ca làm việc'
                 }
               </Text>
-              <Icon name="chevron-down" size={20} color="#666" />
+              {(!loadingShiftAssignments && formData.employeeID && formData.startDateTime && formData.endDateTime) && (
+                <Icon name="chevron-down" size={20} color="#666" />
+              )}
             </TouchableOpacity>
             {errors.workShiftID && <Text style={styles.errorText}>{errors.workShiftID}</Text>}
+            {formData.employeeID && formData.startDateTime && formData.endDateTime && availableWorkShifts.length === 0 && !loadingShiftAssignments && (
+              <Text style={styles.warningText}>
+                Không có ca làm việc nào được phân cho nhân viên này trong khoảng thời gian đã chọn.
+              </Text>
+            )}
           </View>
 
           {/* Start Date */}
@@ -473,7 +764,7 @@ export default function AddLeaveScreen() {
               <Text style={[styles.dateText, !formData.startDateTime && styles.placeholderText]}>
                 {formData.startDateTime ? formatDateTime(formData.startDateTime) : 'Chọn ngày bắt đầu'}
               </Text>
-              <Icon name="calendar" size={20} color="#666" />
+              <Icon name="calendar" size={20} color="#3498db" />
             </TouchableOpacity>
             {errors.startDateTime && <Text style={styles.errorText}>{errors.startDateTime}</Text>}
           </View>
@@ -497,7 +788,7 @@ export default function AddLeaveScreen() {
               <Text style={[styles.dateText, !formData.endDateTime && styles.placeholderText]}>
                 {formData.endDateTime ? formatDateTime(formData.endDateTime) : 'Chọn ngày kết thúc'}
               </Text>
-              <Icon name="calendar" size={20} color="#666" />
+              <Icon name="calendar" size={20} color="#3498db" />
             </TouchableOpacity>
             {errors.endDateTime && <Text style={styles.errorText}>{errors.endDateTime}</Text>}
           </View>
@@ -549,7 +840,7 @@ export default function AddLeaveScreen() {
           </View>
           
           <ScrollView style={styles.modalContent}>
-            {employees.map((employee) => (
+            {availableEmployees.map((employee) => (
               <TouchableOpacity
                 key={employee.id}
                 style={styles.modalItem}
@@ -560,7 +851,7 @@ export default function AddLeaveScreen() {
               >
                 <Text style={styles.modalItemText}>{employee.employeeName}</Text>
                 {formData.employeeID === employee.id && (
-                  <Icon name="check" size={20} color="#008080" />
+                  <Icon name="check" size={20} color="#3498db" />
                 )}
               </TouchableOpacity>
             ))}
@@ -595,7 +886,7 @@ export default function AddLeaveScreen() {
               >
                 <Text style={styles.modalItemText}>{leaveType.leaveTypeName}</Text>
                 {formData.leaveTypeID === leaveType.id && (
-                  <Icon name="check" size={20} color="#008080" />
+                  <Icon name="check" size={20} color="#3498db" />
                 )}
               </TouchableOpacity>
             ))}
@@ -618,21 +909,29 @@ export default function AddLeaveScreen() {
             <View style={{ width: 50 }} />
           </View>
           <ScrollView style={styles.modalBody}>
-            {workShifts.map((shift) => (
-              <TouchableOpacity
-                key={shift.id}
-                style={styles.modalItem}
-                onPress={() => {
-                  setFormData(prev => ({ ...prev, workShiftID: shift.id }));
-                  setShowWorkShiftModal(false);
-                }}
-              >
-                <Text style={styles.modalItemText}>{shift.shiftName}</Text>
-                {formData.workShiftID === shift.id && (
-                  <Icon name="check" size={20} color="#008080" />
-                )}
-              </TouchableOpacity>
-            ))}
+            {displayWorkShifts.length === 0 ? (
+              <View style={styles.modalEmptyContainer}>
+                <Text style={styles.modalEmptyText}>
+                  Không có ca làm việc nào được phân cho nhân viên này trong khoảng thời gian đã chọn.
+                </Text>
+              </View>
+            ) : (
+              displayWorkShifts.map((shift) => (
+                <TouchableOpacity
+                  key={shift.id}
+                  style={styles.modalItem}
+                  onPress={() => {
+                    setFormData(prev => ({ ...prev, workShiftID: shift.id }));
+                    setShowWorkShiftModal(false);
+                  }}
+                >
+                  <Text style={styles.modalItemText}>{shift.shiftName}</Text>
+                  {formData.workShiftID === shift.id && (
+                    <Icon name="check" size={20} color="#3498db" />
+                  )}
+                </TouchableOpacity>
+              ))
+            )}
           </ScrollView>
         </View>
       </Modal>
@@ -654,10 +953,9 @@ export default function AddLeaveScreen() {
                 mode="date"
                 display="default"
                 onChange={handleStartDateChange}
-                minimumDate={new Date()}
                 style={styles.datePicker}
                 textColor="#000"
-                accentColor="#008080"
+                accentColor="#3498db"
               />
             </View>
           </View>
@@ -682,7 +980,7 @@ export default function AddLeaveScreen() {
                 onChange={handleStartTimeChange}
                 style={styles.datePicker}
                 textColor="#000"
-                accentColor="#008080"
+                accentColor="#3498db"
               />
             </View>
           </View>
@@ -706,10 +1004,9 @@ export default function AddLeaveScreen() {
                 mode="date"
                 display="default"
                 onChange={handleEndDateChange}
-                minimumDate={formData.startDateTime ? new Date(formData.startDateTime) : new Date()}
                 style={styles.datePicker}
                 textColor="#000"
-                accentColor="#008080"
+                accentColor="#3498db"
               />
             </View>
           </View>
@@ -734,29 +1031,157 @@ export default function AddLeaveScreen() {
                 onChange={handleEndTimeChange}
                 style={styles.datePicker}
                 textColor="#000"
-                accentColor="#008080"
+                accentColor="#3498db"
               />
             </View>
           </View>
         </Modal>
       )}
+      
+      {/* Overlap Confirmation Modal */}
+      <Modal
+        visible={showOverlapModal}
+        animationType="slide"
+        transparent={true}
+      >
+        <View style={styles.overlapModalContainer}>
+          <View style={styles.overlapModalContent}>
+            <View style={styles.overlapModalHeader}>
+              <Text style={styles.overlapModalTitle}>
+                {overlapModalType === 'leave' 
+                  ? 'Cảnh báo: Đơn nghỉ phép trùng lặp' 
+                  : 'Cảnh báo: Không thể tạo đơn nghỉ phép'}
+              </Text>
+            </View>
+            <RNScrollView style={styles.overlapModalBody}>
+              {/* Warning message based on overlap type */}
+              {overlapModalType === 'leave' ? (
+                <View style={[styles.overlapModalInfo, { backgroundColor: '#fff3cd' }]}>
+                  <Text style={styles.overlapModalInfoText}>
+                    <Icon name="alert-circle" size={16} color="#856404" /> Đơn nghỉ phép này trùng lặp với {overlappingRequests.length} đơn nghỉ phép đã duyệt khác.
+                  </Text>
+                </View>
+              ) : (
+                <View style={[styles.overlapModalInfo, { backgroundColor: '#f8d7da' }]}>
+                  <Text style={[styles.overlapModalInfoText, { color: '#721c24' }]}>
+                    <Icon name="alert-circle" size={16} color="#721c24" /> Đơn nghỉ phép này trùng với đơn tăng ca đã duyệt hoặc ca làm việc đã có dữ liệu chấm công. Không thể tạo đơn.
+                  </Text>
+                </View>
+              )}
+              
+              {/* Overtime Requests Section */}
+              {(overlapModalType === 'overtime' || overlapModalType === 'overtime-leave' || overlapModalType === 'overtime-shift' || overlapModalType === 'all') && overlappingOvertimeRequests.length > 0 && (
+                <View style={styles.overlapSection}>
+                  <Text style={styles.overlapSectionTitle}>
+                    <Icon name="clock" size={16} color="#1976d2" /> Đơn tăng ca trùng lặp ({overlappingOvertimeRequests.length})
+                  </Text>
+                  {overlappingOvertimeRequests.map((request, index) => (
+                    <View key={index} style={styles.overlapItem}>
+                      <Text style={styles.overlapItemText}>
+                        <Text style={{ fontWeight: 'bold' }}>Số phiếu:</Text> {request.voucherCode}{'\n'}
+                        <Text style={{ fontWeight: 'bold' }}>Hình thức tăng ca:</Text> {request.overtimeFormName}{'\n'}
+                        <Text style={{ fontWeight: 'bold' }}>Từ ngày:</Text> {new Date(request.startDateTime).toLocaleString('vi-VN')}{'\n'}
+                        <Text style={{ fontWeight: 'bold' }}>Đến ngày:</Text> {new Date(request.endDateTime).toLocaleString('vi-VN')}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              )}
+              
+              {/* Shift Times Section */}
+              {(overlapModalType === 'shift' || overlapModalType === 'shift-leave' || overlapModalType === 'overtime-shift' || overlapModalType === 'all') && overlappingShiftTimes.length > 0 && (
+                <View style={styles.overlapSection}>
+                  <Text style={styles.overlapSectionTitle}>
+                    <Icon name="clock" size={16} color="#1976d2" /> Ca làm việc có dữ liệu chấm công ({overlappingShiftTimes.length})
+                  </Text>
+                  {overlappingShiftTimes.map((shift, index) => (
+                    <View key={index} style={styles.overlapItem}>
+                      <Text style={styles.overlapItemText}>
+                        <Text style={{ fontWeight: 'bold' }}>Ngày:</Text> {shift.workDate}{'\n'}
+                        <Text style={{ fontWeight: 'bold' }}>Ca làm việc:</Text> {shift.shiftName}{'\n'}
+                        <Text style={{ fontWeight: 'bold' }}>Giờ bắt đầu:</Text> {shift.startTime}{'\n'}
+                        <Text style={{ fontWeight: 'bold' }}>Giờ kết thúc:</Text> {shift.endTime}{'\n'}
+                        <Text style={{ fontWeight: 'bold' }}>Trạng thái:</Text> {shift.hasAttendance ? 'Có dữ liệu chấm công' : 'N/A'}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              )}
+              
+              {/* Leave Requests Section */}
+              {(overlapModalType === 'leave' || overlapModalType === 'overtime-leave' || overlapModalType === 'shift-leave' || overlapModalType === 'all') && overlappingRequests.length > 0 && (
+                <View style={styles.overlapSection}>
+                  <Text style={styles.overlapSectionTitle}>Đơn nghỉ phép trùng lặp ({overlappingRequests.length})</Text>
+                  {overlappingRequests.map((request, index) => (
+                    <View key={index} style={styles.overlapItem}>
+                      <Text style={styles.overlapItemText}>
+                        <Text style={{ fontWeight: 'bold' }}>Số phiếu:</Text> {request.voucherCode}{'\n'}
+                        <Text style={{ fontWeight: 'bold' }}>Loại nghỉ phép:</Text> {request.leaveTypeName}{'\n'}
+                        <Text style={{ fontWeight: 'bold' }}>Từ ngày:</Text> {new Date(request.startDateTime).toLocaleString('vi-VN')}{'\n'}
+                        <Text style={{ fontWeight: 'bold' }}>Đến ngày:</Text> {new Date(request.endDateTime).toLocaleString('vi-VN')}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              )}
+              
+              {/* Info message */}
+              <View style={[styles.overlapModalInfo, { backgroundColor: overlapModalType === 'leave' ? '#fff3cd' : '#d1ecf1' }]}>
+                <Text style={styles.overlapModalInfoText}>
+                  <Icon name="information" size={16} color={overlapModalType === 'leave' ? '#856404' : '#0c5460'} /> 
+                  {overlapModalType === 'leave' 
+                    ? ' Lưu ý: Hệ thống sẽ tính theo đơn có thời gian nghỉ dài hơn trong mỗi ngày.'
+                    : ' Vui lòng kiểm tra và điều chỉnh thời gian đơn nghỉ phép để tránh trùng lặp.'}
+                </Text>
+              </View>
+            </RNScrollView>
+            <View style={styles.overlapModalFooter}>
+              {/* If only leave overlaps, show cancel and confirm buttons */}
+              {overlapModalType === 'leave' ? (
+                <>
+                  <TouchableOpacity 
+                    style={[styles.overlapModalButton, { backgroundColor: '#6c757d', marginRight: 8 }]} 
+                    onPress={handleOverlapCancel}
+                  >
+                    <Text style={styles.overlapModalButtonText}>Hủy</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity 
+                    style={[styles.overlapModalButton, { backgroundColor: '#3498db' }]} 
+                    onPress={handleOverlapConfirm}
+                  >
+                    <Text style={styles.overlapModalButtonText}>Xác nhận tạo đơn</Text>
+                  </TouchableOpacity>
+                </>
+              ) : (
+                /* If overtime or shift overlaps, only show close button (blocks creation) */
+                <TouchableOpacity 
+                  style={[styles.overlapModalButton, { backgroundColor: '#6c757d' }]} 
+                  onPress={handleOverlapCancel}
+                >
+                  <Text style={styles.overlapModalButtonText}>Đóng</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          </View>
+        </View>
+      </Modal>
       </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
+  container: { flex: 1, backgroundColor: '#f5f5f5' },
   scrollView: { flex: 1 },
   form: { 
     backgroundColor: '#fff', 
     margin: 16, 
-    borderRadius: 12, 
-    padding: 16, 
-    elevation: 1,
+    borderRadius: 16, 
+    padding: 20, 
+    elevation: 2,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
+    shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
-    shadowRadius: 2,
+    shadowRadius: 8,
   },
   loadingContainer: {
     flex: 1,
@@ -784,11 +1209,12 @@ const styles = StyleSheet.create({
   },
   input: { 
     backgroundColor: '#f6f8fa', 
-    borderRadius: 8, 
-    padding: 12,
+    borderRadius: 10, 
+    padding: 14,
     fontSize: 16,
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: '#e0e0e0',
+    color: '#2c3e50',
   },
   inputError: {
     borderColor: '#e53935',
@@ -798,6 +1224,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    backgroundColor: '#f6f8fa',
+    borderRadius: 10,
+    padding: 14,
+    borderWidth: 1.5,
+    borderColor: '#e0e0e0',
   },
   dateText: {
     fontSize: 16,
@@ -807,39 +1238,6 @@ const styles = StyleSheet.create({
   placeholderText: {
     color: '#999',
   },
-  datePickerContainer: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'flex-end',
-  },
-  datePickerContent: {
-    backgroundColor: '#fff',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    paddingBottom: 20,
-  },
-  datePickerHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
-  },
-  datePickerTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#333',
-  },
-  datePickerButton: {
-    fontSize: 16,
-    color: '#3498db',
-    fontWeight: '600',
-  },
-  datePicker: {
-    height: 300,
-    backgroundColor: '#fff',
-  },
   voucherCodeContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -847,14 +1245,14 @@ const styles = StyleSheet.create({
   generateBtn: {
     marginLeft: 8,
     padding: 8,
-    backgroundColor: '#f0f0f0',
-    borderRadius: 6,
+    backgroundColor: '#e3f2fd',
+    borderRadius: 8,
   },
   selectContainer: {
     backgroundColor: '#f6f8fa',
-    borderRadius: 8,
-    padding: 12,
-    borderWidth: 1,
+    borderRadius: 10,
+    padding: 14,
+    borderWidth: 1.5,
     borderColor: '#e0e0e0',
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -865,23 +1263,23 @@ const styles = StyleSheet.create({
     color: '#333',
     flex: 1,
   },
+  selectTextDisabled: {
+    color: '#999',
+  },
+  selectContainerDisabled: {
+    backgroundColor: '#f0f0f0',
+    opacity: 0.7,
+  },
   textArea: {
     backgroundColor: '#f6f8fa',
-    borderRadius: 8,
-    padding: 12,
+    borderRadius: 10,
+    padding: 14,
     fontSize: 16,
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: '#e0e0e0',
     textAlignVertical: 'top',
     minHeight: 100,
-  },
-  dateText: {
-    fontSize: 16,
-    color: '#333',
-  },
-  placeholderText: {
-    fontSize: 16,
-    color: '#999',
+    color: '#2c3e50',
   },
   errorText: {
     color: '#e53935',
@@ -975,5 +1373,109 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 4,
     fontStyle: 'italic',
+  },
+  warningText: {
+    color: '#856404',
+    fontSize: 12,
+    marginTop: 4,
+  },
+  modalEmptyContainer: {
+    padding: 20,
+    alignItems: 'center',
+  },
+  modalEmptyText: {
+    fontSize: 16,
+    color: '#666',
+    textAlign: 'center',
+  },
+  // Overlap modal styles
+  overlapModalContainer: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  overlapModalContent: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    width: '100%',
+    maxWidth: 500,
+    maxHeight: '80%',
+    elevation: 5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+  },
+  overlapModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
+    backgroundColor: '#f8f9fa',
+  },
+  overlapModalTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  overlapModalBody: {
+    maxHeight: 400,
+    padding: 16,
+  },
+  overlapModalText: {
+    fontSize: 16,
+    color: '#333',
+    marginBottom: 16,
+  },
+  overlapSection: {
+    marginBottom: 16,
+  },
+  overlapSectionTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#3498db',
+    
+    marginBottom: 8,
+  },
+  overlapItem: {
+    marginBottom: 4,
+    paddingLeft: 8,
+  },
+  overlapItemText: {
+    fontSize: 14,
+    color: '#666',
+  },
+  overlapModalInfo: {
+    marginTop: 16,
+    padding: 12,
+    backgroundColor: '#fff3cd',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#ffc107',
+  },
+  overlapModalInfoText: {
+    fontSize: 14,
+    color: '#856404',
+  },
+  overlapModalFooter: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    padding: 16,
+    borderTopWidth: 1,
+    borderTopColor: '#e0e0e0',
+  },
+  overlapModalButton: {
+    borderRadius: 8,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+  },
+  overlapModalButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
   },
 });

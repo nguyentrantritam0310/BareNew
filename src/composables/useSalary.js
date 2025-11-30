@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
 import { salaryService } from '../services/salaryService';
+import { useAuth } from '../contexts/AuthContext';
 
 export const useSalary = () => {
+  const { user } = useAuth();
   const [salaryData, setSalaryData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -13,7 +15,11 @@ export const useSalary = () => {
       setLoading(true);
       setError(null);
 
-      const data = await salaryService.getPersonalSalaryData(year, month);
+      if (!user?.id) {
+        throw new Error('Chưa đăng nhập');
+      }
+
+      const data = await salaryService.getPersonalSalaryData(year, month, user.id);
       
       // Validate data structure
       if (data && typeof data === 'object') {
@@ -68,8 +74,10 @@ export const useSalary = () => {
   };
 
   useEffect(() => {
-    fetchPersonalSalaryData();
-  }, [selectedYear, selectedMonth]);
+    if (user?.id) {
+      fetchPersonalSalaryData();
+    }
+  }, [selectedYear, selectedMonth, user?.id]);
 
   return {
     salaryData,

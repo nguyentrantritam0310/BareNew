@@ -48,37 +48,24 @@ export const useAttendanceData = () => {
       setAttendanceData(validatedData);
       setConnectionStatus('connected');
     } catch (err) {
-      console.error("Error fetching attendance data:", err);
-      
-      // Provide more specific error messages
       let errorMessage = 'Không thể tải dữ liệu chấm công';
       
-      if (err.response?.status === 404) {
-        errorMessage = 'API endpoint không tồn tại. Đang sử dụng dữ liệu mẫu.';
-        // Try to get mock data as fallback
-        try {
-          const mockData = await attendanceDataService.getAllAttendanceData();
-          if (Array.isArray(mockData) && mockData.length > 0) {
-            setAttendanceData(mockData);
-            setError('Đang sử dụng dữ liệu mẫu do API không khả dụng');
-            setConnectionStatus('mock');
-            return;
-          }
-        } catch (mockError) {
-          console.error('Failed to load mock data:', mockError);
-        }
-      } else if (err.response?.status === 401) {
+      if (err.response?.status === 401) {
         errorMessage = 'Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.';
+      } else if (err.response?.status === 404) {
+        errorMessage = 'Không tìm thấy dữ liệu chấm công.';
       } else if (err.response?.status === 500) {
         errorMessage = 'Lỗi server. Vui lòng thử lại sau.';
       } else if (err.message?.includes('Network Error') || err.message?.includes('timeout')) {
         errorMessage = 'Không thể kết nối đến server. Vui lòng kiểm tra kết nối mạng.';
+      } else if (err.response?.data?.message) {
+        errorMessage = err.response.data.message;
       } else if (err.message) {
         errorMessage = err.message;
       }
       
       setError(errorMessage);
-      setAttendanceData([]); // Set empty array on error
+      setAttendanceData([]);
       setConnectionStatus('disconnected');
     } finally {
       setLoading(false);

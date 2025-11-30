@@ -3,9 +3,11 @@ import { useEffect, useState } from 'react';
 import { 
   ActivityIndicator, 
   Alert, 
+  Modal,
   ScrollView, 
   StyleSheet, 
   Text, 
+  TextInput,
   TouchableOpacity, 
   View 
 } from 'react-native';
@@ -19,7 +21,6 @@ export default function LeaveDetailScreen() {
   const { id } = route.params;
   const { 
     getLeaveRequestById, 
-    deleteLeaveRequest, 
     submitForApproval, 
     approveLeaveRequest,
     loading 
@@ -27,7 +28,13 @@ export default function LeaveDetailScreen() {
   
   const [leave, setLeave] = useState(null);
   const [loadingDetail, setLoadingDetail] = useState(true);
+  const [error, setError] = useState(null);
   const [actionLoading, setActionLoading] = useState(false);
+  
+  // Approval modal state
+  const [showApprovalModal, setShowApprovalModal] = useState(false);
+  const [pendingAction, setPendingAction] = useState(''); // 'submit', 'approve', 'reject', 'return'
+  const [approvalNotes, setApprovalNotes] = useState('');
 
   // Load leave detail on mount
   useEffect(() => {
@@ -37,11 +44,11 @@ export default function LeaveDetailScreen() {
   const loadLeaveDetail = async () => {
     try {
       setLoadingDetail(true);
+      setError(null);
       const data = await getLeaveRequestById(id);
       setLeave(data);
-    } catch (error) {
-      console.error('Error loading leave detail:', error);
-      Alert.alert('Lỗi', 'Không thể tải chi tiết đơn nghỉ phép');
+    } catch (err) {
+      setError('Không thể tải thông tin đơn nghỉ phép');
     } finally {
       setLoadingDetail(false);
     }
@@ -49,30 +56,44 @@ export default function LeaveDetailScreen() {
 
   const formatDate = (dateString) => {
     if (!dateString) return '';
-    const date = new Date(dateString);
-    return date.toLocaleDateString('vi-VN');
+    try {
+      const date = new Date(dateString);
+      if (isNaN(date.getTime())) return '';
+      return date.toLocaleDateString('vi-VN');
+    } catch {
+      return '';
+    }
   };
 
   const formatDateTime = (dateString) => {
     if (!dateString) return '';
-    const date = new Date(dateString);
-    return date.toLocaleString('vi-VN');
+    try {
+      const date = new Date(dateString);
+      if (isNaN(date.getTime())) return '';
+      return date.toLocaleString('vi-VN');
+    } catch {
+      return '';
+    }
   };
 
   const getStatusColor = (status) => {
     switch (status) {
       case 0:
       case '0':
-        return '#6c757d'; // Tạo mới - gray
+      case 'Tạo mới':
+        return '#6c757d';
       case 1:
       case '1':
-        return '#fb8c00'; // Chờ duyệt - orange
+      case 'Chờ duyệt':
+        return '#fb8c00';
       case 2:
       case '2':
-        return '#43a047'; // Đã duyệt - green
+      case 'Đã duyệt':
+        return '#43a047';
       case 3:
       case '3':
-        return '#e53935'; // Từ chối - red
+      case 'Từ chối':
+        return '#e53935';
       default:
         return '#6c757d';
     }
@@ -82,113 +103,89 @@ export default function LeaveDetailScreen() {
     switch (status) {
       case 0:
       case '0':
+      case 'Tạo mới':
         return 'Tạo mới';
       case 1:
       case '1':
+      case 'Chờ duyệt':
         return 'Chờ duyệt';
       case 2:
       case '2':
+      case 'Đã duyệt':
         return 'Đã duyệt';
       case 3:
       case '3':
+      case 'Từ chối':
         return 'Từ chối';
       default:
-        return 'Không xác định';
+        return status || 'Không xác định';
     }
   };
 
-  const canEdit = leave && (leave.approveStatus == 0 || leave.approveStatus === '0');
-  const canSubmit = leave && (leave.approveStatus == 0 || leave.approveStatus === '0');
-  const canApprove = leave && (leave.approveStatus == 1 || leave.approveStatus === '1');
-
-  const handleDelete = () => {
-    Alert.alert(
-      'Xác nhận xóa',
-      `Bạn có chắc chắn muốn xóa đơn nghỉ phép ${leave.voucherCode}?`,
-      [
-        { text: 'Hủy', style: 'cancel' },
-        { 
-          text: 'Xóa', 
-          style: 'destructive',
-          onPress: confirmDelete
-        }
-      ]
-    );
-  };
-
-  const confirmDelete = async () => {
-    try {
-      setActionLoading(true);
-      await deleteLeaveRequest(leave.voucherCode);
-      Alert.alert('Thành công', 'Xóa đơn nghỉ phép thành công', [
-        { text: 'OK', onPress: () => navigation.goBack() }
-      ]);
-    } catch (error) {
-      console.error('Error deleting leave request:', error);
-      Alert.alert('Lỗi', 'Không thể xóa đơn nghỉ phép');
-    } finally {
-      setActionLoading(false);
-    }
-  };
+  // Logic tương tự leave.vue: chỉ cho phép gửi duyệt khi status = "Tạo mới"
+  const canSubmit = leave?.approveStatus === 0 || leave?.approveStatus === '0' || leave?.approveStatus === 'Tạo mới';
+  // Chỉ cho phép duyệt/từ chối khi status = "Chờ duyệt"
+  const canApprove = leave?.approveStatus === 1 || leave?.approveStatus === '1' || leave?.approveStatus === 'Chờ duyệt';
 
   const handleSubmitForApproval = () => {
-    Alert.alert(
-      'Gửi duyệt',
-      'Bạn có chắc chắn muốn gửi đơn nghỉ phép để duyệt?',
-      [
-        { text: 'Hủy', style: 'cancel' },
-        { 
-          text: 'Gửi duyệt', 
-          onPress: confirmSubmitForApproval
-        }
-      ]
-    );
-  };
-
-  const confirmSubmitForApproval = async () => {
-    try {
-      setActionLoading(true);
-      await submitForApproval(leave.voucherCode);
-      Alert.alert('Thành công', 'Gửi duyệt thành công', [
-        { text: 'OK', onPress: () => loadLeaveDetail() }
-      ]);
-    } catch (error) {
-      console.error('Error submitting for approval:', error);
-      Alert.alert('Lỗi', 'Không thể gửi duyệt đơn nghỉ phép');
-    } finally {
-      setActionLoading(false);
-    }
+    setPendingAction('submit');
+    setApprovalNotes('');
+    setShowApprovalModal(true);
   };
 
   const handleApprove = (action) => {
-    const actionText = action === 'approve' ? 'duyệt' : action === 'reject' ? 'từ chối' : 'trả lại';
-    Alert.alert(
-      `Xác nhận ${actionText}`,
-      `Bạn có chắc chắn muốn ${actionText} đơn nghỉ phép này?`,
-      [
-        { text: 'Hủy', style: 'cancel' },
-        { 
-          text: actionText.charAt(0).toUpperCase() + actionText.slice(1), 
-          onPress: () => confirmApprove(action)
-        }
-      ]
-    );
+    setPendingAction(action);
+    setApprovalNotes('');
+    setShowApprovalModal(true);
   };
 
-  const confirmApprove = async (action) => {
+  const getApprovalModalTitle = () => {
+    const titles = {
+      submit: 'Gửi duyệt đơn nghỉ phép',
+      approve: 'Duyệt đơn nghỉ phép',
+      reject: 'Từ chối đơn nghỉ phép',
+      return: 'Trả lại đơn nghỉ phép'
+    };
+    return titles[pendingAction] || 'Nhập ghi chú';
+  };
+
+  const handleApprovalConfirm = async () => {
     try {
       setActionLoading(true);
-      await approveLeaveRequest(leave.voucherCode, action);
-      const actionText = action === 'approve' ? 'Duyệt' : action === 'reject' ? 'Từ chối' : 'Trả lại';
-      Alert.alert('Thành công', `${actionText} thành công`, [
-        { text: 'OK', onPress: () => loadLeaveDetail() }
-      ]);
+      const notes = approvalNotes.trim() || null;
+      
+      switch (pendingAction) {
+        case 'submit':
+          await submitForApproval(leave.voucherCode, notes);
+          Alert.alert('Thành công', 'Gửi duyệt thành công', [
+            { text: 'OK', onPress: () => loadLeaveDetail() }
+          ]);
+          break;
+        case 'approve':
+        case 'reject':
+        case 'return':
+          await approveLeaveRequest(leave.voucherCode, pendingAction, notes);
+          const actionText = pendingAction === 'approve' ? 'Duyệt' : pendingAction === 'reject' ? 'Từ chối' : 'Trả lại';
+          Alert.alert('Thành công', `${actionText} thành công`, [
+            { text: 'OK', onPress: () => loadLeaveDetail() }
+          ]);
+          break;
+      }
+      
+      setShowApprovalModal(false);
+      setPendingAction('');
+      setApprovalNotes('');
     } catch (error) {
-      console.error('Error approving leave request:', error);
       Alert.alert('Lỗi', 'Không thể thực hiện thao tác');
     } finally {
       setActionLoading(false);
     }
+  };
+
+  const handleApprovalCancel = () => {
+    setShowApprovalModal(false);
+    setPendingAction('');
+    setApprovalNotes('');
   };
 
   if (loadingDetail) {
@@ -197,23 +194,21 @@ export default function LeaveDetailScreen() {
         <CustomHeader title="Chi tiết đơn nghỉ phép" />
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#3498db" />
-          <Text style={styles.loadingText}>Đang tải chi tiết...</Text>
+          <Text style={styles.loadingText}>Đang tải dữ liệu...</Text>
         </View>
       </View>
     );
   }
 
-  if (!leave) {
+  if (error || !leave) {
     return (
       <View style={styles.container}>
         <CustomHeader title="Chi tiết đơn nghỉ phép" />
         <View style={styles.errorContainer}>
           <Icon name="alert-circle" size={64} color="#e53935" />
-          <Text style={styles.errorText}>Không tìm thấy đơn nghỉ phép</Text>
-          <TouchableOpacity style={styles.retryBtn} onPress={loadLeaveDetail}>
-            <View style={styles.retryBtnSolid}>
-              <Text style={styles.retryBtnText}>Thử lại</Text>
-            </View>
+          <Text style={styles.errorText}>{error || 'Không tìm thấy đơn nghỉ phép'}</Text>
+          <TouchableOpacity style={styles.retryButton} onPress={loadLeaveDetail}>
+            <Text style={styles.retryButtonText}>Thử lại</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -223,147 +218,153 @@ export default function LeaveDetailScreen() {
   return (
     <View style={styles.container}>
       <CustomHeader title="Chi tiết đơn nghỉ phép" />
-
-        {/* Content */}
-        <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
-        {/* Status Card */}
-        <View style={styles.statusCard}>
-          <View style={styles.statusHeader}>
+        
+        <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
+        <View style={styles.infoBox}>
+          {/* Header */}
+          <View style={styles.infoHeader}>
             <Text style={styles.voucherCode}>#{leave.voucherCode}</Text>
-            <View style={[styles.statusBadge, { backgroundColor: getStatusColor(leave.approveStatus) }]}>
-              <Text style={styles.statusText}>{getStatusText(leave.approveStatus)}</Text>
-            </View>
+            <Text style={[styles.status, { color: getStatusColor(leave.approveStatus) }]}>
+              {getStatusText(leave.approveStatus)}
+            </Text>
           </View>
-        </View>
 
-        {/* Info Card */}
-        <View style={styles.infoCard}>
+          {/* Employee */}
           <View style={styles.infoRow}>
-            <Icon name="account" size={20} color="#666" />
-            <View style={styles.infoContent}>
-              <Text style={styles.infoLabel}>Nhân viên</Text>
-              <Text style={styles.infoValue}>{leave.userName || leave.employeeID}</Text>
-            </View>
+            <Text style={styles.label}>Nhân viên</Text>
+            <Text style={styles.value}>{leave.userName || leave.employeeID}</Text>
           </View>
 
+          {/* Leave Type */}
           <View style={styles.infoRow}>
-            <Icon name="calendar" size={20} color="#666" />
-            <View style={styles.infoContent}>
-              <Text style={styles.infoLabel}>Loại nghỉ phép</Text>
-              <Text style={styles.infoValue}>{leave.leaveTypeName || 'Nghỉ phép'}</Text>
-            </View>
+            <Text style={styles.label}>Loại nghỉ phép</Text>
+            <Text style={styles.value}>{leave.leaveTypeName || 'N/A'}</Text>
           </View>
 
-          <View style={styles.infoRow}>
-            <Icon name="clock-start" size={20} color="#666" />
-            <View style={styles.infoContent}>
-              <Text style={styles.infoLabel}>Từ ngày</Text>
-              <Text style={styles.infoValue}>{formatDateTime(leave.startDateTime)}</Text>
-            </View>
-          </View>
-
-          <View style={styles.infoRow}>
-            <Icon name="clock-end" size={20} color="#666" />
-            <View style={styles.infoContent}>
-              <Text style={styles.infoLabel}>Đến ngày</Text>
-              <Text style={styles.infoValue}>{formatDateTime(leave.endDateTime)}</Text>
-            </View>
-          </View>
-
+          {/* Work Shift */}
           {leave.workShiftName && (
             <View style={styles.infoRow}>
-              <Icon name="clock-outline" size={20} color="#666" />
-              <View style={styles.infoContent}>
-                <Text style={styles.infoLabel}>Ca làm việc</Text>
-                <Text style={styles.infoValue}>{leave.workShiftName}</Text>
-              </View>
+              <Text style={styles.label}>Ca làm việc</Text>
+              <Text style={styles.value}>{leave.workShiftName}</Text>
             </View>
           )}
 
+          {/* Start Date */}
           <View style={styles.infoRow}>
-            <Icon name="text" size={20} color="#666" />
-            <View style={styles.infoContent}>
-              <Text style={styles.infoLabel}>Lý do</Text>
-              <Text style={styles.infoValue}>{leave.reason || 'Không có'}</Text>
-            </View>
+            <Text style={styles.label}>Từ ngày</Text>
+            <Text style={styles.value}>{formatDateTime(leave.startDateTime)}</Text>
           </View>
+
+          {/* End Date */}
+          <View style={styles.infoRow}>
+            <Text style={styles.label}>Đến ngày</Text>
+            <Text style={styles.value}>{formatDateTime(leave.endDateTime)}</Text>
+          </View>
+
+          {/* Reason */}
+          <View style={styles.infoRow}>
+            <Text style={styles.label}>Lý do</Text>
+            <Text style={styles.value}>{leave.reason || 'N/A'}</Text>
+          </View>
+
+          {/* Created Date */}
+          {leave.createdDate && (
+            <View style={styles.infoRow}>
+              <Text style={styles.label}>Ngày tạo</Text>
+              <Text style={styles.value}>{formatDateTime(leave.createdDate)}</Text>
+            </View>
+          )}
         </View>
 
         {/* Actions */}
-        {(canEdit || canSubmit || canApprove) && (
-          <View style={styles.actionCard}>
-            <Text style={styles.actionTitle}>Thao tác</Text>
-            
-            {canEdit && (
-              <View style={styles.actionRow}>
-                <TouchableOpacity 
-                  style={[styles.actionBtn, styles.deleteBtn]} 
-                  onPress={handleDelete}
-                  disabled={actionLoading}
-                >
-                  <Icon name="delete" size={22} color="#fff" />
-                  <Text style={styles.actionBtnText}>Xóa</Text>
-                </TouchableOpacity>
-                
-                <TouchableOpacity 
-                  style={[styles.actionBtn, styles.editBtn]} 
-                  onPress={() => navigation.navigate('EditLeave', { id })}
-                  disabled={actionLoading}
-                >
-                  <Icon name="pencil" size={22} color="#fff" />
-                  <Text style={styles.actionBtnText}>Sửa</Text>
-                </TouchableOpacity>
-              </View>
+        {(canSubmit || canApprove) && (
+          <View style={styles.actionContainer}>
+            {canSubmit && (
+              <TouchableOpacity style={[styles.actionButton, styles.submitButton]} onPress={handleSubmitForApproval} disabled={actionLoading}>
+                <Icon name="send" size={20} color="#fff" />
+                <Text style={styles.actionButtonText}>Gửi duyệt</Text>
+              </TouchableOpacity>
             )}
 
-            {canSubmit && (
+            {canApprove && (
+              <>
+                <TouchableOpacity style={[styles.actionButton, styles.approveButton]} onPress={() => handleApprove('approve')} disabled={actionLoading}>
+                  <Icon name="check" size={20} color="#fff" />
+                  <Text style={styles.actionButtonText}>Duyệt</Text>
+                </TouchableOpacity>
+                
+                <TouchableOpacity style={[styles.actionButton, styles.rejectButton]} onPress={() => handleApprove('reject')} disabled={actionLoading}>
+                  <Icon name="close" size={20} color="#fff" />
+                  <Text style={styles.actionButtonText}>Từ chối</Text>
+                </TouchableOpacity>
+                
+                <TouchableOpacity style={[styles.actionButton, styles.returnButton]} onPress={() => handleApprove('return')} disabled={actionLoading}>
+                  <Icon name="undo" size={20} color="#fff" />
+                  <Text style={styles.actionButtonText}>Trả lại</Text>
+                </TouchableOpacity>
+              </>
+            )}
+          </View>
+        )}
+      </ScrollView>
+      
+      {/* Approval Notes Modal */}
+      <Modal
+        visible={showApprovalModal}
+        animationType="slide"
+        transparent={true}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>{getApprovalModalTitle()}</Text>
+            </View>
+            
+            <ScrollView style={styles.modalBody}>
+              <View style={styles.notesInputContainer}>
+                <Text style={styles.notesLabel}>Ghi chú (tùy chọn)</Text>
+                <TextInput
+                  style={styles.notesInput}
+                  multiline
+                  numberOfLines={4}
+                  placeholder="Nhập ghi chú..."
+                  value={approvalNotes}
+                  onChangeText={setApprovalNotes}
+                  textAlignVertical="top"
+                />
+              </View>
+            </ScrollView>
+            
+            <View style={styles.modalFooter}>
               <TouchableOpacity 
-                style={[styles.actionBtn, styles.submitBtn]} 
-                onPress={handleSubmitForApproval}
+                style={[styles.modalButton, styles.modalCancelButton]} 
+                onPress={handleApprovalCancel}
+              >
+                <Text style={styles.modalButtonText}>Hủy</Text>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={[styles.modalButton, styles.modalConfirmButton]} 
+                onPress={handleApprovalConfirm}
                 disabled={actionLoading}
               >
                 {actionLoading ? (
                   <ActivityIndicator size="small" color="#fff" />
                 ) : (
-                  <>
-                    <Icon name="send" size={22} color="#fff" />
-                    <Text style={styles.actionBtnText}>Gửi duyệt</Text>
-                  </>
+                  <Text style={styles.modalButtonText}>Xác nhận</Text>
                 )}
               </TouchableOpacity>
-            )}
-
-            {canApprove && (
-              <View style={styles.actionRow}>
-                <TouchableOpacity 
-                  style={[styles.actionBtn, styles.approveBtn]} 
-                  onPress={() => handleApprove('approve')}
-                  disabled={actionLoading}
-                >
-                  <Icon name="check" size={22} color="#fff" />
-                  <Text style={styles.actionBtnText}>Duyệt</Text>
-                </TouchableOpacity>
-                
-                <TouchableOpacity 
-                  style={[styles.actionBtn, styles.rejectBtn]} 
-                  onPress={() => handleApprove('reject')}
-                  disabled={actionLoading}
-                >
-                  <Icon name="close" size={22} color="#fff" />
-                  <Text style={styles.actionBtnText}>Từ chối</Text>
-                </TouchableOpacity>
-              </View>
-            )}
+            </View>
           </View>
-        )}
-      </ScrollView>
-      </View>
+        </View>
+      </Modal>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
+  container: { flex: 1, backgroundColor: '#f5f5f5' },
   scrollView: { flex: 1 },
+  scrollContent: { paddingBottom: 20 },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
@@ -389,142 +390,183 @@ const styles = StyleSheet.create({
     marginBottom: 20,
     textAlign: 'center',
   },
-  retryBtn: {
-    borderRadius: 12,
-    overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  retryBtnSolid: {
+  retryButton: {
     backgroundColor: '#3498db',
     paddingHorizontal: 20,
     paddingVertical: 12,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
+    borderRadius: 8,
   },
-  retryBtnText: {
+  retryButtonText: {
     color: '#fff',
     fontSize: 16,
     fontWeight: 'bold',
   },
-  statusCard: {
-    backgroundColor: '#fff',
-    margin: 16,
-    borderRadius: 12,
-    padding: 16,
-    elevation: 1,
+  infoBox: { 
+    backgroundColor: '#fff', 
+    margin: 16, 
+    borderRadius: 16, 
+    padding: 20, 
+    elevation: 2,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
+    shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
-    shadowRadius: 2,
+    shadowRadius: 8,
   },
-  statusHeader: {
+  infoHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    marginBottom: 16,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
   },
   voucherCode: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: 'bold',
     color: '#3498db',
   },
-  statusBadge: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-  },
-  statusText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: 'bold',
-  },
-  infoCard: {
-    backgroundColor: '#fff',
-    margin: 16,
-    marginTop: 0,
-    borderRadius: 12,
-    padding: 16,
-    elevation: 1,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
+  status: { 
+    fontWeight: 'bold', 
+    fontSize: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 4,
+    backgroundColor: '#f5f5f5',
   },
   infoRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    marginBottom: 16,
-  },
-  infoContent: {
-    flex: 1,
-    marginLeft: 12,
-  },
-  infoLabel: {
-    fontSize: 14,
-    color: '#666',
-    marginBottom: 4,
-  },
-  infoValue: {
-    fontSize: 16,
-    color: '#2c3e50',
-    fontWeight: '600',
-  },
-  actionCard: {
-    backgroundColor: '#fff',
-    margin: 16,
-    marginTop: 0,
-    borderRadius: 12,
-    padding: 16,
-    elevation: 1,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-  },
-  actionTitle: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#2c3e50',
-    marginBottom: 16,
-  },
-  actionRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
     marginBottom: 12,
   },
-  actionBtn: {
+  label: { 
+    fontWeight: 'bold', 
+    color: '#3498db', 
+    marginBottom: 4,
+    fontSize: 14,
+  },
+  value: { 
+    color: '#333', 
+    fontSize: 16, 
+    lineHeight: 22,
+  },
+  actionContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    margin: 16,
+    paddingHorizontal: 16,
+    flexWrap: 'wrap',
+  },
+  actionButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
     borderRadius: 8,
-    padding: 12,
-    flex: 1,
-    marginHorizontal: 4,
+    minWidth: 100,
+    justifyContent: 'center',
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    margin: 4,
   },
-  actionBtnText: {
-    marginLeft: 8,
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#fff',
-  },
-  deleteBtn: {
-    backgroundColor: '#e53935',
-  },
-  editBtn: {
+  submitButton: {
     backgroundColor: '#3498db',
   },
-  submitBtn: {
-    backgroundColor: '#1976d2',
-    marginBottom: 12,
-  },
-  approveBtn: {
+  approveButton: {
     backgroundColor: '#43a047',
   },
-  rejectBtn: {
+  rejectButton: {
     backgroundColor: '#e53935',
+  },
+  returnButton: {
+    backgroundColor: '#fb8c00',
+  },
+  actionButtonText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: 'bold',
+    marginLeft: 6,
+  },
+  // Approval modal styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  modalContent: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    width: '100%',
+    maxWidth: 500,
+    maxHeight: '80%',
+    elevation: 5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+  },
+  modalHeader: {
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
+    backgroundColor: '#f8f9fa',
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  modalBody: {
+    padding: 16,
+    maxHeight: 300,
+  },
+  notesInputContainer: {
+    marginBottom: 16,
+  },
+  notesLabel: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#3498db',
+    marginBottom: 8,
+  },
+  notesInput: {
+    backgroundColor: '#f6f8fa',
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 16,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    minHeight: 100,
+    textAlignVertical: 'top',
+  },
+  modalFooter: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    padding: 16,
+    borderTopWidth: 1,
+    borderTopColor: '#e0e0e0',
+    gap: 8,
+  },
+  modalButton: {
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 8,
+    minWidth: 100,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalCancelButton: {
+    backgroundColor: '#6c757d',
+  },
+  modalConfirmButton: {
+    backgroundColor: '#3498db',
+  },
+  modalButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
   },
 });

@@ -156,13 +156,14 @@ class LeaveService {
   /**
    * Gửi đơn nghỉ phép để duyệt
    * @param {string} voucherCode - Mã phiếu
+   * @param {string} notes - Ghi chú
    * @returns {Promise<Object>} Kết quả gửi duyệt
    */
-  async submitForApproval(voucherCode) {
+  async submitForApproval(voucherCode, notes) {
     try {
-      console.log('Submitting leave request for approval:', voucherCode);
-      const response = await this.api.put(`/EmployeeRequest/leave/${voucherCode}`, {
-        approveStatus: 'Chờ duyệt'
+      console.log('Submitting leave request for approval:', voucherCode, 'with notes:', notes);
+      const response = await this.api.put(`/EmployeeRequest/leave/${voucherCode}/submit`, {
+        notes: notes || null
       });
       console.log('Submit for approval response:', response.data);
       return response.data;
@@ -176,28 +177,30 @@ class LeaveService {
    * Duyệt đơn nghỉ phép
    * @param {string} voucherCode - Mã phiếu
    * @param {string} action - Hành động (approve, reject, return)
+   * @param {string} notes - Ghi chú
    * @returns {Promise<Object>} Kết quả duyệt
    */
-  async approveLeaveRequest(voucherCode, action) {
+  async approveLeaveRequest(voucherCode, action, notes) {
     try {
-      let newStatus;
+      console.log('Approving leave request:', voucherCode, 'with action:', action, 'and notes:', notes);
+      
+      let endpoint;
       switch (action) {
         case 'approve':
-          newStatus = 'Đã duyệt';
+          endpoint = `/EmployeeRequest/leave/${voucherCode}/approve`;
           break;
         case 'reject':
-          newStatus = 'Từ chối';
+          endpoint = `/EmployeeRequest/leave/${voucherCode}/reject`;
           break;
         case 'return':
-          newStatus = 'Tạo mới';
+          endpoint = `/EmployeeRequest/leave/${voucherCode}/return`;
           break;
         default:
           throw new Error('Invalid approval action');
       }
 
-      console.log('Approving leave request:', voucherCode, 'with action:', action);
-      const response = await this.api.put(`/EmployeeRequest/leave/${voucherCode}`, {
-        approveStatus: newStatus
+      const response = await this.api.put(endpoint, {
+        notes: notes || null
       });
       console.log('Approve leave request response:', response.data);
       return response.data;

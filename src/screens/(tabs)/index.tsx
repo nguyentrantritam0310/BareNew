@@ -1,10 +1,8 @@
 import { useNavigation } from '@react-navigation/native';
 import React, { useState, useEffect } from 'react';
-import { Image, SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View, Alert, StatusBar, Dimensions } from 'react-native';
+import { SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View, Alert, StatusBar, Dimensions } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect } from '@react-navigation/native';
-// import { LinearGradient } from 'expo-linear-gradient';
-// import { BlurView } from 'expo-blur';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useAuth } from '../../contexts/AuthContext';
 import HomeHeader from '../../components/common/HomeHeader';
@@ -56,10 +54,10 @@ const subIcons = [
     key: 'overtime', 
     label: 'Tăng ca', 
     icon: 'clock-plus-outline', 
-    primaryColor: '#2c3e50',
-    secondaryColor: '#34495e',
-    gradient: ['#2c3e50', '#34495e'],
-    bgGradient: ['#ecf0f1', '#f8f9fa']
+    primaryColor: '#43a047',
+    secondaryColor: '#66bb6a',
+    gradient: ['#43a047', '#66bb6a'],
+    bgGradient: ['#e8f5e9', '#f1f8f4']
   },
   { 
     key: 'face-registration', 
@@ -74,130 +72,131 @@ const subIcons = [
 
 export default function HomeScreen() {
   const [checkedIn, setCheckedIn] = useState(false); // Mặc định chưa checkin
-  const [actualCheckInTime, setActualCheckInTime] = useState(null); // Giờ checkin thực tế
+  const [actualCheckInTime, setActualCheckInTime] = useState<string | null>(null); // Giờ checkin thực tế
   const { user, logout, isAuthenticated, isLoading } = useAuth();
   const userName = user?.fullName || 'Người dùng';
-  const checkInTime = '08:40';
   const navigation = useNavigation() as any;
 
-  // Kiểm tra authentication state và chuyển hướng nếu cần
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
       navigation.replace('Login');
     } else if (isAuthenticated && user?.id) {
-      // Kiểm tra trạng thái checkin khi đã đăng nhập
       checkTodayAttendanceStatus();
     }
   }, [isAuthenticated, isLoading, user?.id]);
 
-  // Kiểm tra trạng thái checkin từ API
-  const checkTodayAttendanceStatus = async () => {
-    if (!user?.id) return;
-    
-    try {
-      const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
-      
-      // Try API first, but don't let it break the app
+
+  const retryCheckTodayAttendanceStatus = async (maxRetries = 3, delay = 2000) => {
+    for (let i = 0; i < maxRetries; i++) {
+      await new Promise(resolve => setTimeout(resolve, delay));
       try {
-        const response = await api.get(`/AttendanceData`);
-        
-        if (response.data && response.data.length > 0) {
-          // Filter dữ liệu của user hôm nay
-          const todayAttendance = response.data.find((item: any) => 
-            item.employeeCode === user.id && 
-            item.workDate === today
-          );
-          
-          if (todayAttendance) {
-            const hasCheckIn = todayAttendance.checkInTime !== null;
-            const hasCheckOut = todayAttendance.checkOutTime !== null;
-            
-            console.log('📊 Today attendance status:', {
-              hasCheckIn,
-              hasCheckOut,
-              checkInTime: todayAttendance.checkInTime,
-              checkOutTime: todayAttendance.checkOutTime
-            });
-            
-            if (hasCheckIn && !hasCheckOut) {
-              // Đã checkin nhưng chưa checkout
-              setCheckedIn(true);
-              setActualCheckInTime(todayAttendance.checkInTime);
-            } else if (hasCheckIn && hasCheckOut) {
-              // Đã checkin và checkout rồi
-              setCheckedIn(false);
-              setActualCheckInTime(todayAttendance.checkInTime);
-            } else {
-              // Chưa checkin
-              setCheckedIn(false);
-              setActualCheckInTime(null);
-            }
-            return; // Exit early if API data is found
-          }
+        const response = await api.get(`/Attendance/today/${user.id}`);
+        if (response.data) {
+          checkTodayAttendanceStatus();
+          return;
         }
-      } catch (apiError: any) {
-        console.log('📱 API not available, using AsyncStorage fallback:', apiError?.message || 'Unknown error');
-      }
-      
-      // Fallback: sử dụng AsyncStorage
-      const todayStr = new Date().toDateString();
-      const checkinData = await AsyncStorage.getItem(`checkin_${todayStr}`);
-      if (checkinData) {
-        const parsed = JSON.parse(checkinData);
-        console.log('📱 Using AsyncStorage checkin data:', parsed);
-        setCheckedIn(parsed.checkedIn);
-        if (parsed.checkInTime) {
-          setActualCheckInTime(parsed.checkInTime);
-        }
-      } else {
-        // Default state - not checked in
-        setCheckedIn(false);
-        setActualCheckInTime(null);
-      }
-    } catch (error) {
-      console.error('Error checking attendance status:', error);
-      // Final fallback: sử dụng AsyncStorage
-      const todayStr = new Date().toDateString();
-      const checkinData = await AsyncStorage.getItem(`checkin_${todayStr}`);
-      if (checkinData) {
-        const parsed = JSON.parse(checkinData);
-        console.log('📱 Final fallback - AsyncStorage checkin data:', parsed);
-        setCheckedIn(parsed.checkedIn);
-        if (parsed.checkInTime) {
-          setActualCheckInTime(parsed.checkInTime);
-        }
-      } else {
-        setCheckedIn(false);
-        setActualCheckInTime(null);
+      } catch (error: any) {
+        // Retry silently
       }
     }
   };
 
-  // Reload checkin status khi focus vào screen
+  const getTodayStorageKey = () => {
+    return `checkin_${user.id}_${new Date().toDateString()}`;
+  }
+
+  const getAsyncStorageData = async () => {
+    try {
+      const checkinData = await AsyncStorage.getItem(getTodayStorageKey());
+      if (checkinData) {
+        const parsed = JSON.parse(checkinData);
+        if (parsed.userId === user.id) {
+          return parsed;
+        }
+        await AsyncStorage.removeItem(getTodayStorageKey());
+      }
+    } catch (error) {
+      // Handle error silently
+    }
+    return null;
+  }
+
+  const setAttendanceFromAPI = (data: any) => {
+    if (data.employeeId !== user.id) {
+      setCheckedIn(false);
+      setActualCheckInTime(null);
+      return;
+    }
+
+    const checkInDateTime = data.checkInDateTime;
+    const checkOutDateTime = data.checkOutDateTime;
+    const hasCheckIn = checkInDateTime != null && checkInDateTime !== '';
+    const hasCheckOut = checkOutDateTime != null && checkOutDateTime !== '';
+
+    if (hasCheckIn && !hasCheckOut) {
+      setCheckedIn(true);
+      const checkInDate = new Date(checkInDateTime);
+      setActualCheckInTime(checkInDate.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', hour12: false }));
+    } else if (hasCheckIn && hasCheckOut) {
+      setCheckedIn(false);
+      const checkInDate = new Date(checkInDateTime);
+      setActualCheckInTime(checkInDate.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', hour12: false }));
+    } else {
+      setCheckedIn(false);
+      setActualCheckInTime(null);
+    }
+  }
+
+  const setAttendanceFromStorage = (data: any) => {
+    setCheckedIn(data.checkedIn);
+    if (data.checkInTime) {
+      setActualCheckInTime(data.checkInTime);
+    }
+  }
+
+  const checkTodayAttendanceStatus = async () => {
+    if (!user?.id) return;
+
+    try {
+      const response = await api.get(`/Attendance/today/${user.id}`);
+      if (response.data) {
+        setAttendanceFromAPI(response.data);
+        return;
+      }
+    } catch (apiError: any) {
+      if (apiError?.response?.status === 404) {
+        const storageData = await getAsyncStorageData();
+        if (storageData?.checkedIn) {
+          setAttendanceFromStorage(storageData);
+          retryCheckTodayAttendanceStatus();
+          return;
+        }
+        setCheckedIn(false);
+        setActualCheckInTime(null);
+        return;
+      }
+    }
+
+    const storageData = await getAsyncStorageData();
+    if (storageData) {
+      setAttendanceFromStorage(storageData);
+    } else {
+      setCheckedIn(false);
+      setActualCheckInTime(null);
+    }
+  };
+
   useFocusEffect(
     React.useCallback(() => {
       if (isAuthenticated && user?.id) {
-        checkTodayAttendanceStatus();
+        const timer = setTimeout(() => {
+          checkTodayAttendanceStatus();
+        }, 500);
+        return () => clearTimeout(timer);
       }
     }, [user?.id, isAuthenticated])
   );
 
-  // Save trạng thái checkin vào AsyncStorage
-  const saveCheckinStatus = async (status: boolean) => {
-    try {
-      const today = new Date().toDateString();
-      const checkinData = {
-        checkedIn: status,
-        timestamp: new Date().toISOString()
-      };
-      await AsyncStorage.setItem(`checkin_${today}`, JSON.stringify(checkinData));
-      setCheckedIn(status);
-    } catch (error) {
-      console.error('Error saving checkin status:', error);
-    }
-  };
-
-  // Hiển thị loading nếu đang kiểm tra authentication
   if (isLoading) {
     return (
       <SafeAreaView style={styles.container}>
@@ -222,13 +221,24 @@ export default function HomeScreen() {
           style: 'destructive',
           onPress: async () => {
             await logout();
-            // Chuyển hướng về trang login sau khi đăng xuất
             navigation.replace('Login');
           },
         },
       ]
     );
   };
+
+  const handleMainIconPress = (key: string) => {
+    if (key === 'attendance') navigation.navigate('AttendanceLayout');
+    if (key === 'profile') navigation.navigate('Profile');
+    if (key === 'salary') navigation.navigate('Payslip');
+  }
+
+  const handleSubIconPress = (key: string) => {
+    if (key === 'leave') navigation.navigate('Leave');
+    if (key === 'overtime') navigation.navigate('Overtime');
+    if (key === 'face-registration') navigation.navigate('FaceRegistration');
+  }
   return (
     <View style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#ecf0f1" />
@@ -241,7 +251,6 @@ export default function HomeScreen() {
         <HomeHeader 
           userName={userName}
           onLogoutPress={handleLogout}
-          avatarSource={require('../../../assets/images/partial-react-logo.png')}
         />
 
         {/* Main icons */}
@@ -251,11 +260,7 @@ export default function HomeScreen() {
               <TouchableOpacity
                 key={item.key}
                 style={styles.mainIconBtn}
-                onPress={() => {
-                  if (item.key === 'attendance') navigation.navigate('AttendanceLayout');
-                  if (item.key === 'profile') navigation.navigate('Profile');
-                  if (item.key === 'salary') navigation.navigate('Payslip');
-                }}
+                onPress={() => handleMainIconPress(item.key)}
                 activeOpacity={0.8}
               >
                 <View style={[styles.mainIconCircle, { backgroundColor: item.bgGradient[0] }]}>
@@ -312,17 +317,13 @@ export default function HomeScreen() {
               <TouchableOpacity
                 key={item.key}
                 style={styles.subIconBtn}
-                onPress={() => {
-                  if (item.key === 'leave') navigation.navigate('Leave');
-                  if (item.key === 'overtime') navigation.navigate('Overtime');
-                  if (item.key === 'face-registration') navigation.navigate('FaceRegistration');
-                }}
+                onPress={() => handleSubIconPress(item.key)}
                 activeOpacity={0.8}
               >
                 <View style={styles.subIconBlur}>
                   <View style={[styles.subIconContent, { backgroundColor: item.bgGradient[0] }]}>
                     <View style={[styles.subIconInner, { backgroundColor: item.gradient[0] }]}>
-                      <Icon name={item.icon} size={28} color="#ffffff" style={styles.subIconEmoji} />
+                      <Icon name={item.icon} size={28} color="#ffffff" />
                     </View>
                     <Text style={[styles.subIconLabel, { color: item.primaryColor }]}>{item.label}</Text>
                   </View>
@@ -335,17 +336,13 @@ export default function HomeScreen() {
               <TouchableOpacity
                 key={item.key}
                 style={styles.subIconBtn}
-                onPress={() => {
-                  if (item.key === 'leave') navigation.navigate('Leave');
-                  if (item.key === 'overtime') navigation.navigate('Overtime');
-                  if (item.key === 'face-registration') navigation.navigate('FaceRegistration');
-                }}
+                onPress={() => handleSubIconPress(item.key)}
                 activeOpacity={0.8}
               >
                 <View style={styles.subIconBlur}>
                   <View style={[styles.subIconContent, { backgroundColor: item.bgGradient[0] }]}>
                     <View style={[styles.subIconInner, { backgroundColor: item.gradient[0] }]}>
-                      <Icon name={item.icon} size={28} color="#ffffff" style={styles.subIconEmoji} />
+                      <Icon name={item.icon} size={28} color="#ffffff" />
                     </View>
                     <Text style={[styles.subIconLabel, { color: item.primaryColor }]}>{item.label}</Text>
                   </View>
@@ -464,12 +461,6 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     alignItems: 'center',
   },
-  checkedIn: {
-    // Style for checked in state
-  },
-  checkedOut: {
-    // Style for checked out state
-  },
   checkBtnRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -491,12 +482,6 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.2,
     shadowRadius: 8,
     elevation: 4,
-  },
-  checkedInIcon: {
-    backgroundColor: '#dbeafe',
-  },
-  checkedOutIcon: {
-    backgroundColor: '#fecaca',
   },
   checkTextContainer: {
     flex: 1,
@@ -586,9 +571,6 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.2,
     shadowRadius: 8,
     elevation: 4,
-  },
-  subIconEmoji: {
-    // Icon styling handled in component
   },
   subIconLabel: {
     fontSize: 15,

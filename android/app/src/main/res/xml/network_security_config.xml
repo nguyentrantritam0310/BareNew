@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Allow cleartext (HTTP) traffic for specific domain -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">160.250.132.226</domain>
+    </domain-config>
+    <!-- By default, only HTTPS is allowed for other domains -->
+</network-security-config>
+

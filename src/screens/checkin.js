@@ -1,11 +1,9 @@
-import axios from 'axios';
 import api from '../api';
 import Geolocation from '@react-native-community/geolocation';
 import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  Button,
   Image,
   Modal,
   SafeAreaView,
@@ -19,7 +17,6 @@ import {
 import SimpleMapView from '../components/SimpleMapView';
 import SimpleFaceRecognitionCamera from '../components/SimpleFaceRecognitionCamera';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
-// import { LinearGradient } from 'expo-linear-gradient';
 import { useWorkShift } from '../composables/useWorkShift';
 import { getAttendanceMachines } from '../services/attendanceMachineService';
 import { useAuth } from '../contexts/AuthContext';
@@ -27,7 +24,9 @@ import CustomHeader from '../components/CustomHeader';
 import { useNavigation } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-// Haversine formula
+// ==================== Helper Functions ====================
+
+// Haversine formula - tính khoảng cách giữa 2 điểm GPS
 function getDistance(lat1, lon1, lat2, lon2) {
   const R = 6371e3;
   const φ1 = lat1 * Math.PI / 180;
@@ -39,188 +38,68 @@ function getDistance(lat1, lon1, lat2, lon2) {
   return R * c;
 }
 
-const internalCameraStyles = StyleSheet.create({
- container: { 
-    flex: 1, 
-    backgroundColor: '#000' 
-  },
-  camera: { 
-    flex: 1 
-  },
-  header: {
-    position: 'absolute',
-    top: 50,
-    left: 0,
-    right: 0,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    zIndex: 1
-  },
-  footer: {
-    position: 'absolute',
-    bottom: 40,
-    left: 0,
-    right: 0,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    zIndex: 1
-  },
-  permissionContainer: { 
-    flex: 1, 
-    justifyContent: 'center', 
-    alignItems: 'center', 
-    padding: 20,
-    backgroundColor: '#fff'
-  },
-  permissionText: { 
-    textAlign: 'center', 
-    marginBottom: 20, 
-    fontSize: 16,
-    color: '#333'
-  },
-  closeBtn: { 
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    borderRadius: 20,
-    padding: 8
-  },
-  cameraTypeIndicator: {
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    borderRadius: 15,
-    paddingHorizontal: 12,
-    paddingVertical: 6
-  },
-  cameraTypeText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: 'bold'
-  },
-  captureBtn: { 
-    alignSelf: 'center' 
-  },
-  captureBtnDisabled: {
-    opacity: 0.5
-  },
-  captureInnerCircle: {
-    width: 70,
-    height: 70,
-    borderRadius: 35,
-    backgroundColor: '#fff',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 4,
-    borderColor: 'rgba(255,255,255,0.5)'
-  },
-  flipBtn: { 
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    borderRadius: 20,
-    padding: 8,
-    alignItems: 'center'
-  },
-  flipText: {
-    color: '#fff',
-    fontSize: 10,
-    marginTop: 4
-  },
-  loadingOverlay: { 
-    ...StyleSheet.absoluteFillObject, 
-    backgroundColor: 'rgba(0,0,0,0.7)', 
-    justifyContent: 'center', 
-    alignItems: 'center' 
-  },
-  capturingOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.5)', 
-    justifyContent: 'center', 
-    alignItems: 'center'
-  },
-  loadingText: { 
-    color: '#fff', 
-    marginTop: 12, 
-    fontSize: 16 
-  },
-  previewContainer: { 
-    position: 'absolute', 
-    bottom: 130, 
-    right: 20, 
-    alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    padding: 10,
-    borderRadius: 12
-  },
-  previewImage: { 
-    width: 60, 
-    height: 60, 
-    borderRadius: 8, 
-    borderWidth: 2, 
-    borderColor: '#fff' 
-  },
-  previewText: { 
-    color: '#fff', 
-    fontSize: 12, 
-    marginTop: 4 
-  },
-  detectionIndicator: {
-    position: 'absolute',
-    top: 100,
-    left: 20,
-    right: 20,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    borderRadius: 20,
-    padding: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 1
-  },
-  detectionText: {
-    color: '#4caf50',
-    fontSize: 14,
-    marginLeft: 8,
-    fontWeight: '500'
-  },
-  statusIndicator: {
-    position: 'absolute',
-    top: 150,
-    left: 20,
-    right: 20,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    borderRadius: 20,
-    padding: 12,
-    alignItems: 'center',
-    zIndex: 1
-  },
-  statusText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold',
-    textAlign: 'center'
-  },
-  countdownStatus: {
-    color: '#ffeb3b',
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginTop: 4,
-    textAlign: 'center'
-  },
-  disabledText: {
-    color: '#ff9800',
-    fontSize: 14,
-    fontWeight: '500',
-    marginTop: 4,
-    textAlign: 'center'
-  },
-  capturingText: {
-    color: '#4caf50',
-    fontSize: 14,
-    fontWeight: 'bold',
-    marginTop: 4,
-    textAlign: 'center'
-  },
-});
+// Chuyển đổi tên ngày thành số (0 = Chủ nhật, 1 = Thứ 2, ...)
+function getDayOfWeekNumber(dayName) {
+  if (!dayName) return -1;
+  
+  const days = {
+    'Chủ nhật': 0, 'chủ nhật': 0, 'CN': 0,
+    'Thứ hai': 1, 'thứ hai': 1, 'Thứ 2': 1, 'thứ 2': 1, 'T2': 1,
+    'Thứ ba': 2, 'thứ ba': 2, 'Thứ 3': 2, 'thứ 3': 2, 'T3': 2,
+    'Thứ tư': 3, 'thứ tư': 3, 'Thứ 4': 3, 'thứ 4': 3, 'T4': 3,
+    'Thứ năm': 4, 'thứ năm': 4, 'Thứ 5': 4, 'thứ 5': 4, 'T5': 4,
+    'Thứ sáu': 5, 'thứ sáu': 5, 'Thứ 6': 5, 'thứ 6': 5, 'T6': 5,
+    'Thứ bảy': 6, 'thứ bảy': 6, 'Thứ 7': 6, 'thứ 7': 6, 'T7': 6,
+    'Sunday': 0, 'sunday': 0, 'Sun': 0,
+    'Monday': 1, 'monday': 1, 'Mon': 1,
+    'Tuesday': 2, 'tuesday': 2, 'Tue': 2,
+    'Wednesday': 3, 'wednesday': 3, 'Wed': 3,
+    'Thursday': 4, 'thursday': 4, 'Thu': 4,
+    'Friday': 5, 'friday': 5, 'Fri': 5,
+    'Saturday': 6, 'saturday': 6, 'Sat': 6,
+    '0': 0, '1': 1, '2': 2, '3': 3, '4': 4, '5': 5, '6': 6
+  };
+  
+  return days[dayName.trim()] ?? -1;
+}
+
+// Parse thời gian từ string (HH:mm) thành phút
+function parseTime(timeString) {
+  const [hours, minutes] = timeString.split(':').map(Number);
+  return hours * 60 + minutes;
+}
+
+// Tạo location object từ position
+function createLocationObject(position) {
+  return {
+    latitude: position.coords.latitude,
+    longitude: position.coords.longitude,
+    accuracy: position.coords.accuracy,
+    altitude: position.coords.altitude,
+    altitudeAccuracy: position.coords.altitudeAccuracy,
+    heading: position.coords.heading,
+    speed: position.coords.speed,
+  };
+}
+
+// Lưu check-in status vào AsyncStorage (với user ID để tránh lẫn lộn giữa các users)
+async function saveCheckInStatus(mode, userId) {
+  try {
+    if (!userId) return;
+    const today = new Date().toDateString();
+    const checkinData = {
+      userId: userId, // Thêm user ID để security
+      checkedIn: mode === 'checkin',
+      timestamp: new Date().toISOString(),
+      checkInTime: mode === 'checkin' ? new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', hour12: false }) : null,
+      checkOutTime: mode === 'checkout' ? new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', hour12: false }) : null
+    };
+    await AsyncStorage.setItem(`checkin_${userId}_${today}`, JSON.stringify(checkinData));
+  } catch (error) {
+    // Handle error silently
+  }
+}
+
 
 export default function CheckInScreen({ route }) {
   const { user } = useAuth();
@@ -231,14 +110,12 @@ export default function CheckInScreen({ route }) {
   const [machinesLoading, setMachinesLoading] = useState(true);
   const [isWithinRadius, setIsWithinRadius] = useState(false);
   const [activeMachineName, setActiveMachineName] = useState('');
-  const [isCameraOpen, setIsCameraOpen] = useState(false);
   const [isFaceRecognitionOpen, setIsFaceRecognitionOpen] = useState(false);
   const [capturedImage, setCapturedImage] = useState(null);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState(null);
-  const [connectionStatus, setConnectionStatus] = useState('testing');
   const [selectedShift, setSelectedShift] = useState(null);
-  const [showShiftModal, setShowShiftModal] = useState(false);
+  const [checkedShiftIds, setCheckedShiftIds] = useState([]); // Danh sách ca đã check-in/checkout hôm nay
   
   // Watch ID để clear khi unmount
   const watchIdRef = useRef(null);
@@ -269,7 +146,6 @@ export default function CheckInScreen({ route }) {
     
     // Nếu không có ca nào phù hợp với ngày hiện tại, hiển thị tất cả ca
     if (todayShifts.length === 0) {
-      console.log('⚠️ No shifts found for today, showing all shifts as fallback');
       return workShifts.filter(shift => shift.shiftDetails && shift.shiftDetails.length > 0);
     }
     
@@ -301,245 +177,200 @@ export default function CheckInScreen({ route }) {
     });
   };
 
-  // Chuyển đổi tên ngày thành số
-  const getDayOfWeekNumber = (dayName) => {
-    if (!dayName) return -1;
-    
-    const days = {
-      // Tiếng Việt
-      'Chủ nhật': 0, 'chủ nhật': 0, 'CN': 0,
-      'Thứ hai': 1, 'thứ hai': 1, 'Thứ 2': 1, 'thứ 2': 1, 'T2': 1,
-      'Thứ ba': 2, 'thứ ba': 2, 'Thứ 3': 2, 'thứ 3': 2, 'T3': 2,
-      'Thứ tư': 3, 'thứ tư': 3, 'Thứ 4': 3, 'thứ 4': 3, 'T4': 3,
-      'Thứ năm': 4, 'thứ năm': 4, 'Thứ 5': 4, 'thứ 5': 4, 'T5': 4,
-      'Thứ sáu': 5, 'thứ sáu': 5, 'Thứ 6': 5, 'thứ 6': 5, 'T6': 5,
-      'Thứ bảy': 6, 'thứ bảy': 6, 'Thứ 7': 6, 'thứ 7': 6, 'T7': 6,
-      
-      // Tiếng Anh
-      'Sunday': 0, 'sunday': 0, 'Sun': 0,
-      'Monday': 1, 'monday': 1, 'Mon': 1,
-      'Tuesday': 2, 'tuesday': 2, 'Tue': 2,
-      'Wednesday': 3, 'wednesday': 3, 'Wed': 3,
-      'Thursday': 4, 'thursday': 4, 'Thu': 4,
-      'Friday': 5, 'friday': 5, 'Fri': 5,
-      'Saturday': 6, 'saturday': 6, 'Sat': 6,
-      
-      // Số
-      '0': 0, '1': 1, '2': 2, '3': 3, '4': 4, '5': 5, '6': 6
-    };
-    
-    const result = days[dayName.trim()] ?? -1;
-    console.log('🔄 Converting day:', dayName, '->', result);
-    return result;
+
+  // Lọc các ca đã check-in/checkout khi ở mode check-in
+  const getFilteredShifts = () => {
+    const todayShifts = getTodayShifts();
+    if (mode === 'checkin' && checkedShiftIds.length > 0) {
+      // Ẩn các ca đã check-in/checkout
+      return todayShifts.filter(shift => !checkedShiftIds.includes(shift.id));
+    }
+    return todayShifts;
   };
 
-  // Parse thời gian từ string (HH:mm) thành phút
-  const parseTime = (timeString) => {
-    const [hours, minutes] = timeString.split(':').map(Number);
-    return hours * 60 + minutes;
-  };
-
-  const availableShifts = getTodayShifts();
+  const availableShifts = getFilteredShifts();
   const currentTimeShifts = getCurrentTimeShifts();
 
-  // Debug workShifts data
-  useEffect(() => {
-    console.log('🔍 Debug workShifts data:');
-    console.log('📊 workShifts:', workShifts);
-    console.log('📊 workShifts length:', workShifts?.length);
-    console.log('📊 shiftsLoading:', shiftsLoading);
-    console.log('📊 shiftsError:', shiftsError);
-    
-    if (workShifts && workShifts.length > 0) {
-      console.log('📊 First shift example:', workShifts[0]);
-      console.log('📊 First shift shiftDetails:', workShifts[0]?.shiftDetails);
-      
-      // Debug current day
-      const currentDay = now.getDay();
-      console.log('📅 Current day number:', currentDay);
-      console.log('📅 Current day name:', ['Chủ nhật', 'Thứ hai', 'Thứ ba', 'Thứ tư', 'Thứ năm', 'Thứ sáu', 'Thứ bảy'][currentDay]);
-      
-      // Debug available shifts
-      const todayShifts = getTodayShifts();
-      console.log('📊 Today shifts:', todayShifts);
-      console.log('📊 Today shifts length:', todayShifts.length);
-      
-      // Debug each shift's day mapping
-      workShifts.forEach((shift, index) => {
-        console.log(`📊 Shift ${index} (${shift.shiftName}):`);
-        if (shift.shiftDetails) {
-          shift.shiftDetails.forEach((detail, detailIndex) => {
-            const dayNumber = getDayOfWeekNumber(detail.dayOfWeek);
-            console.log(`  Detail ${detailIndex}: ${detail.dayOfWeek} -> ${dayNumber} (current: ${currentDay})`);
-          });
-        } else {
-          console.log('  No shiftDetails');
-        }
-      });
-    } else {
-      console.log('❌ No workShifts data');
-    }
-  }, [workShifts, shiftsLoading, shiftsError]);
 
+
+  // Fetch danh sách ca đã check-in/checkout hôm nay (để ẩn khi check-in)
   useEffect(() => {
-    const testServerConnection = async () => {
-      console.log('🔍 Testing server connection...');
-      
-      // Bỏ qua test kết nối và đặt trạng thái connected
-      // Mobile app sẽ test kết nối thực tế khi chấm công
-      setConnectionStatus('connected');
-      console.log('✅ Server connection assumed (will test on actual check-in)');
+    const fetchCheckedShifts = async () => {
+      if (mode === 'checkin' && user?.id) {
+        try {
+          const response = await api.get(`/Attendance/today-shifts/${user.id}`);
+          if (response.data && response.data.checkedShiftIds) {
+            setCheckedShiftIds(response.data.checkedShiftIds);
+          }
+        } catch (error) {
+          // Handle error silently
+        }
+      }
     };
 
-    testServerConnection();
-  }, []);
+    fetchCheckedShifts();
+  }, [mode, user?.id]);
+
+  // Tự động chọn ca khi checkout dựa trên ca đã chọn khi check-in
+  useEffect(() => {
+    const fetchTodayAttendanceAndSetShift = async () => {
+      if (mode === 'checkout' && user?.id && workShifts && workShifts.length > 0 && !selectedShift) {
+        try {
+          const response = await api.get(`/Attendance/today/${user.id}`);
+          
+          if (response.data) {
+            if (response.data.workShiftID) {
+              const shift = workShifts.find(s => s.id === response.data.workShiftID);
+              if (shift) {
+                setSelectedShift(shift);
+              }
+            } else {
+              if (response.data.checkOutDateTime) {
+                // Already checked out
+              } else if (response.data.checkInDateTime) {
+                Alert.alert(
+                  'Thông báo',
+                  'Bản ghi chấm công vào không có thông tin ca làm việc. Vui lòng liên hệ quản trị viên.',
+                  [{ text: 'OK' }]
+                );
+              }
+            }
+          }
+        } catch (error) {
+          // Handle error silently
+        }
+      }
+    };
+
+    fetchTodayAttendanceAndSetShift();
+  }, [mode, user?.id, workShifts, selectedShift]);
 
   useEffect(() => {
+    const requestLocationPermission = async () => {
+      try {
+        if (Geolocation.requestAuthorization) {
+          await Geolocation.requestAuthorization();
+        }
+      } catch (permError) {
+        // Permission may already be granted
+      }
+    };
+
+    const startLocationWatch = (lastKnownLocation) => {
+      if (watchIdRef.current !== null) return;
+      
+      watchIdRef.current = Geolocation.watchPosition(
+        (watchPosition) => {
+          const newAcc = watchPosition.coords.accuracy;
+          const currentAcc = lastKnownLocation?.accuracy || Infinity;
+          
+          if (!lastKnownLocation || newAcc < currentAcc || newAcc < 50) {
+            const updatedLocation = createLocationObject(watchPosition);
+            setLocation(updatedLocation);
+            lastKnownLocation = updatedLocation;
+          }
+        },
+        () => {
+          // Keep old location on watch error
+        },
+        {
+          enableHighAccuracy: false,
+          timeout: 20000,
+          maximumAge: 10000,
+          distanceFilter: 5,
+        }
+      );
+    };
+
     const fetchLocation = async () => {
       setLocationLoading(true);
       
-      // Kiểm tra quyền location trước
       try {
-        // Request permission trước (Android cần explicit request)
-        const requestPermission = async () => {
-          if (Geolocation.requestAuthorization) {
-            try {
-              await Geolocation.requestAuthorization();
-            } catch (permError) {
-              console.log('⚠️ Permission request error (may already be granted):', permError);
-            }
-          }
-        };
-        await requestPermission();
+        await requestLocationPermission();
       } catch (permErr) {
-        console.log('⚠️ Permission check error:', permErr);
+        // Continue anyway
       }
       
       let retryCount = 0;
-      const maxRetries = 3;
+      const maxRetries = 2;
+      let lastKnownLocation = null;
       
-      const tryGetLocation = () => {
-        console.log(`🔄 [GPS] Attempting to get location (attempt ${retryCount + 1}/${maxRetries})...`);
-        
+      const tryGetLocation = (useCached = true) => {
         try {
-          // Thử getCurrentPosition với timeout ngắn hơn
           Geolocation.getCurrentPosition(
             (position) => {
-              console.log('✅ [GPS] Location obtained:', {
-                lat: position.coords.latitude,
-                lng: position.coords.longitude,
-                accuracy: position.coords.accuracy
-              });
-              
-              setLocation({
-                latitude: position.coords.latitude,
-                longitude: position.coords.longitude,
-                accuracy: position.coords.accuracy,
-                altitude: position.coords.altitude,
-                altitudeAccuracy: position.coords.altitudeAccuracy,
-                heading: position.coords.heading,
-                speed: position.coords.speed,
-              });
+              const newLocation = createLocationObject(position);
+              setLocation(newLocation);
+              lastKnownLocation = newLocation;
               setLocationLoading(false);
-              
-              // Sau khi có vị trí, bắt đầu watch để cập nhật liên tục
-              if (watchIdRef.current === null) {
-                console.log('📡 [GPS] Starting location watch...');
-                watchIdRef.current = Geolocation.watchPosition(
-                  (watchPosition) => {
-                    console.log('🔄 [GPS] Location updated');
-                    setLocation({
-                      latitude: watchPosition.coords.latitude,
-                      longitude: watchPosition.coords.longitude,
-                      accuracy: watchPosition.coords.accuracy,
-                      altitude: watchPosition.coords.altitude,
-                      altitudeAccuracy: watchPosition.coords.altitudeAccuracy,
-                      heading: watchPosition.coords.heading,
-                      speed: watchPosition.coords.speed,
-                    });
-                  },
-                  (watchError) => {
-                    console.warn('⚠️ [GPS] Watch error:', watchError);
-                    // Không dừng watch, chỉ log warning
-                  },
-                  {
-                    enableHighAccuracy: true,
-                    timeout: 15000,
-                    maximumAge: 5000, // Chấp nhận vị trí cũ hơn 5 giây
-                    distanceFilter: 10, // Chỉ update khi di chuyển > 10m
-                  }
-                );
-              }
+              startLocationWatch(lastKnownLocation);
             },
             (error) => {
-              console.error(`❌ [GPS] Error (attempt ${retryCount + 1}/${maxRetries}):`, error.code, error.message);
+              if (lastKnownLocation && retryCount === 0) {
+                setLocation(lastKnownLocation);
+                setLocationLoading(false);
+                startLocationWatch(lastKnownLocation);
+              }
               
-              // Retry nếu chưa hết số lần thử
               if (retryCount < maxRetries - 1) {
                 retryCount++;
-                console.log(`🔄 [GPS] Retrying in 2 seconds...`);
-                setTimeout(() => {
-                  tryGetLocation();
-                }, 2000);
+                setTimeout(() => tryGetLocation(true), 1000);
               } else {
-                // Hết số lần thử, thử với cài đặt ít chính xác hơn
-                console.log('🔄 [GPS] Trying with lower accuracy settings...');
-                Geolocation.getCurrentPosition(
-                  (position) => {
-                    console.log('✅ [GPS] Location obtained with fallback settings');
-                    setLocation({
-                      latitude: position.coords.latitude,
-                      longitude: position.coords.longitude,
-                      accuracy: position.coords.accuracy,
-                      altitude: position.coords.altitude,
-                      altitudeAccuracy: position.coords.altitudeAccuracy,
-                      heading: position.coords.heading,
-                      speed: position.coords.speed,
-                    });
-                    setLocationLoading(false);
-                  },
-                  (finalError) => {
-                    console.error('❌ [GPS] Final error:', finalError);
-                    setLocationLoading(false);
-                    // Không hiển thị alert, để user có thể thử lại bằng cách quay lại màn hình
-                    console.log('⚠️ [GPS] Location unavailable. User can retry by navigating back.');
-                  },
-                  {
-                    enableHighAccuracy: false, // Thử với độ chính xác thấp hơn
-                    timeout: 10000, // Timeout ngắn hơn
-                    maximumAge: 60000, // Chấp nhận vị trí cũ hơn (60 giây)
-                  }
-                );
+                if (lastKnownLocation) {
+                  setLocation(lastKnownLocation);
+                  setLocationLoading(false);
+                  startLocationWatch(lastKnownLocation);
+                } else {
+                  Geolocation.getCurrentPosition(
+                    (position) => {
+                      const fallbackLocation = createLocationObject(position);
+                      setLocation(fallbackLocation);
+                      lastKnownLocation = fallbackLocation;
+                      setLocationLoading(false);
+                      startLocationWatch(lastKnownLocation);
+                    },
+                    () => {
+                      setLocationLoading(false);
+                      if (lastKnownLocation) {
+                        setLocation(lastKnownLocation);
+                      }
+                    },
+                    {
+                      enableHighAccuracy: false,
+                      timeout: 8000,
+                      maximumAge: 300000,
+                    }
+                  );
+                }
               }
             },
             {
-              enableHighAccuracy: true,
-              timeout: 15000, // Giảm timeout xuống 15 giây
-              maximumAge: 0, // Luôn lấy vị trí mới nhất
+              enableHighAccuracy: false,
+              timeout: 10000,
+              maximumAge: useCached ? 30000 : 0,
             }
           );
         } catch (err) {
-          console.error('❌ [GPS] Exception:', err);
-          if (retryCount < maxRetries - 1) {
+          if (lastKnownLocation) {
+            setLocation(lastKnownLocation);
+            setLocationLoading(false);
+            startLocationWatch(lastKnownLocation);
+          } else if (retryCount < maxRetries - 1) {
             retryCount++;
-            setTimeout(() => {
-              tryGetLocation();
-            }, 2000);
+            setTimeout(() => tryGetLocation(true), 1000);
           } else {
             setLocationLoading(false);
           }
         }
       };
       
-      tryGetLocation();
+      tryGetLocation(true);
     };
     
     fetchLocation();
     
-    // Cleanup: clear watch khi unmount
     return () => {
       if (watchIdRef.current !== null) {
-        console.log('🛑 [GPS] Clearing location watch');
         Geolocation.clearWatch(watchIdRef.current);
         watchIdRef.current = null;
       }
@@ -552,10 +383,9 @@ export default function CheckInScreen({ route }) {
       try {
         const data = await getAttendanceMachines();
         setMachines(data);
-      } catch (err) {
-        console.error('Error fetching machines:', err);
-        Alert.alert('Lỗi', 'Không thể tải danh sách máy chấm công');
-      } finally {
+        } catch (err) {
+          Alert.alert('Lỗi', 'Không thể tải danh sách máy chấm công');
+        } finally {
         setMachinesLoading(false);
       }
     };
@@ -588,18 +418,11 @@ export default function CheckInScreen({ route }) {
     setIsFaceRecognitionOpen(false);
     const { recognitionResult } = data;
     
-    console.log('📥 [CHECKIN] Received face recognition result:', recognitionResult);
-    
-    // Check if verification was successful
     if (!recognitionResult.success) {
-      Alert.alert(
-        'Lỗi', 
-        recognitionResult.message || 'Không thể xác minh khuôn mặt'
-      );
+      Alert.alert('Lỗi', recognitionResult.message || 'Không thể xác minh khuôn mặt');
       return;
     }
 
-    // Check if face matches
     if (!recognitionResult.isMatch) {
       Alert.alert(
         'Nhận diện thất bại',
@@ -607,20 +430,9 @@ export default function CheckInScreen({ route }) {
       );
       return;
     }
-
-    // Note: Server already validates threshold (0.88 for FaceNet)
-    // Trust server's decision - if isMatch is true, confidence is acceptable
-    
-    console.log('✅ [CHECKIN] Face verification successful:', {
-      isMatch: recognitionResult.isMatch,
-      confidence: recognitionResult.confidence,
-      employeeName: recognitionResult.employeeName,
-      attendance: recognitionResult.attendance // Check if attendance was already processed
-    });
     
     // Check if attendance was already processed by SimpleFaceRecognitionCamera
     if (recognitionResult.attendance) {
-      console.log('✅ [CHECKIN] Attendance already processed by camera component');
       setUploadStatus('success');
       Alert.alert(
         'Thành công',
@@ -629,20 +441,8 @@ export default function CheckInScreen({ route }) {
           {
             text: 'OK',
             onPress: async () => {
-              try {
-                const today = new Date().toDateString();
-                const newStatus = mode === 'checkin' ? true : false;
-                const checkinData = {
-                  checkedIn: newStatus,
-                  timestamp: new Date().toISOString(),
-                  checkInTime: mode === 'checkin' ? new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', hour12: false }) : null,
-                  checkOutTime: mode === 'checkout' ? new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', hour12: false }) : null
-                };
-                await AsyncStorage.setItem(`checkin_${today}`, JSON.stringify(checkinData));
-                navigation.replace('(tabs)');
-              } catch {
-                navigation.navigate('(tabs)');
-              }
+              await saveCheckInStatus(mode, user?.id);
+              navigation.goBack();
             }
           }
         ]
@@ -650,357 +450,104 @@ export default function CheckInScreen({ route }) {
       return;
     }
     
-    // If attendance not processed yet, process it here (fallback)
-    console.log('📤 [CHECKIN] Processing check-in via checkin.js (fallback)...');
+    // Process attendance if not already processed
     await processCheckInNoImage(recognitionResult);
   };
 
-  const handlePictureTaken = async (photo) => {
-    setIsCameraOpen(false);
-    if (!photo || !photo.base64) {
-      Alert.alert('Lỗi', 'Không thể lấy được ảnh đã xử lý.');
-      return;
-    }
 
-    setCapturedImage(photo.uri);
-    setUploadStatus(null);
-    setIsUploading(true);
-    
-    // Process check-in with regular photo
-    await processCheckIn(photo.base64);
+
+  const formatDateTimeForVietnam = (date) => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    const seconds = String(date.getSeconds()).padStart(2, '0');
+    return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}`;
   };
 
-  const processCheckIn = async (imageBase64, recognitionResult = null) => {
-    try {
-      console.log('Bắt đầu chấm công...');
-      
-      // Kiểm tra kích thước ảnh trước khi gửi
-      console.log(`📏 Check-in image size: ${imageBase64.length} characters (${Math.round(imageBase64.length/1024)}KB)`);
-      
-      // Sử dụng ảnh đã được nén từ camera với chất lượng thấp
-      let finalBase64 = imageBase64;
-      
-      console.log(`📸 Final image size: ${finalBase64.length} characters (${Math.round(finalBase64.length/1024)}KB)`);
-      
-      // Log thông tin ảnh để debug
-      if (finalBase64.length > 200000) { // 200KB warning
-        console.log('⚠️ Image still large, but sending anyway for Simple Attendance API');
-      } else {
-        console.log('✅ Image size is acceptable for Simple Attendance API');
-      }
-      
-      // Chuẩn bị dữ liệu chấm công theo đúng format API
-      const currentDateTime = new Date().toISOString();
-      const faceRecognitionInfo = recognitionResult ? 
-        ` - Face Recognition: ${recognitionResult.employeeName} (Confidence: ${(recognitionResult.confidence * 100).toFixed(1)}%)` : 
-        '';
-      
-      const checkInData = mode === 'checkin' ? {
-        employeeId: user?.id || 'unknown-user',
-        imageBase64: finalBase64,
-        checkInDateTime: currentDateTime,
-        latitude: location?.latitude || 0,
-        longitude: location?.longitude || 0,
-        location: activeMachineName || 'Unknown Location',
-        attendanceMachineId: 2,
-        notes: `Check-in from mobile app - Ca: ${selectedShift?.shiftName || 'Chưa chọn ca'}${faceRecognitionInfo}`
-      } : {
-        employeeId: user?.id || 'unknown-user',
-        imageBase64: finalBase64,
-        checkOutDateTime: currentDateTime,
-        latitude: location?.latitude || 0,
-        longitude: location?.longitude || 0,
-        location: activeMachineName || 'Unknown Location',
-        notes: `Check-out from mobile app - Ca: ${selectedShift?.shiftName || 'Chưa chọn ca'}${faceRecognitionInfo}`
-      };
+  const createVerificationMetadata = (recognitionResult) => {
+    const now = new Date();
+    const faceInfo = recognitionResult 
+      ? ` - Face Recognition: ${recognitionResult.employeeName} (Confidence: ${(recognitionResult.confidence * 100).toFixed(1)}%)` 
+      : '';
+    const verificationToken = `${user.id}_${Date.now()}_${Math.random().toString(36).substring(2, 15)}`;
+    const verificationTimestamp = now.toISOString();
+    
+    return {
+      faceInfo,
+      verificationToken,
+      verificationTimestamp,
+    };
+  };
 
-      // Validation dữ liệu cho Simple Attendance API
-      if (!checkInData.employeeId) {
-        throw new Error('employeeId is required');
-      }
-      if (!checkInData.imageBase64) {
-        throw new Error('imageBase64 is required');
-      }
-      if (checkInData.imageBase64.length < 100) {
-        throw new Error('imageBase64 too small, please retake photo');
-      }
-      console.log('👤 Current user:', user);
-      console.log('🆔 User ID:', user?.id);
-      console.log('📧 User Email:', user?.email);
-      console.log('👤 User Full Name:', user?.fullName);
+  const processCheckInNoImage = async (recognitionResult) => {
+    try {
+      setIsUploading(true);
       
       if (!user?.id) {
         throw new Error('Vui lòng đăng nhập để chấm công');
       }
       
       if (!selectedShift) {
-        throw new Error('Vui lòng chọn ca làm việc trước khi chấm công');
-      }
-      
-      // Cảnh báo nếu chọn ca không phù hợp với thời gian hiện tại
-      const isCurrentTime = currentTimeShifts.some(s => s.id === selectedShift.id);
-      if (!isCurrentTime) {
-        console.log('⚠️ Warning: Selected shift is not current time shift');
-      }
-
-      console.log('📤 Sending check-in data:', {
-        mode: mode,
-        employeeId: checkInData.employeeId,
-        imageSize: checkInData.imageBase64.length,
-        latitude: checkInData.latitude,
-        longitude: checkInData.longitude,
-        location: checkInData.location,
-        checkInDateTime: checkInData.checkInDateTime,
-        checkOutDateTime: checkInData.checkOutDateTime,
-        notes: checkInData.notes
-      });
-      
-      console.log('📋 Full checkInData object:', JSON.stringify(checkInData, null, 2));
-
-      // Gửi dữ liệu chấm công lên Simple Attendance API với fallback
-      let response;
-      let workingUrl = null;
-      
-      // Chọn API endpoint dựa trên mode
-      const apiEndpoint = mode === 'checkin' ? 'checkin' : 'checkout';
-      const urls = [
-        `https://xaydungvipro.id.vn/api/Attendance/${apiEndpoint}`
-      ];
-      
-      for (const url of urls) {
-        try {
-          console.log(`Trying check-in URL: ${url}`);
-          response = await fetch(url, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(checkInData)
-          });
-          
-          if (response.ok) {
-            workingUrl = url;
-            console.log(`✅ Check-in successful with URL: ${url}`);
-            const result = await response.json();
-            console.log('📥 Response data:', result);
-            break;
-          } else {
-            console.log(`⚠️ Check-in response with URL: ${url}, status: ${response.status}`);
-            const errorText = await response.text();
-            console.log(`⚠️ Response text: ${errorText}`);
-            
-            // Kiểm tra nếu là lỗi business logic (400) nhưng có thể đã lưu dữ liệu
-            if (response.status === 400) {
-              try {
-                const errorData = JSON.parse(errorText);
-                if (errorData.message && errorData.message.includes('đã chấm công')) {
-                  // Đây là trường hợp đã chấm công rồi, coi như thành công
-                  workingUrl = url;
-                  console.log(`✅ Check-in already done, treating as success`);
-                  break;
-                }
-              } catch (parseError) {
-                console.log('Could not parse error response as JSON');
-              }
-            }
-          }
-        } catch (error) {
-          console.log(`❌ Check-in error with URL: ${url}, error: ${error.message}`);
+        if (mode === 'checkin') {
+          throw new Error('Vui lòng chọn ca làm việc trước khi chấm công');
+        } else {
+          throw new Error('Không tìm thấy ca đã chấm công vào. Vui lòng chấm công vào trước.');
         }
       }
-      
-      if (!workingUrl) {
-        throw new Error('Không thể kết nối đến máy chấm công');
-      }
 
-      // Nếu có workingUrl thì đã thành công
-      let result;
-      try {
-        result = await response.json();
-      } catch (jsonError) {
-        // Nếu không parse được JSON, tạo response giả
-        result = { message: 'Check-in thành công' };
-      }
-      
-      console.log('✅ Check-in thành công! Response:', result);
-      console.log('🎯 Mode:', mode, '- Sẽ navigate về trang chủ...');
-      
-      // Kiểm tra nếu là trường hợp đã chấm công
-      const isAlreadyCheckedIn = result.message && result.message.includes('đã chấm công');
-      
-      setUploadStatus('success');
-      Alert.alert(
-        isAlreadyCheckedIn ? 'Thông báo' : 'Thành công', 
-        isAlreadyCheckedIn 
-          ? `Bạn đã chấm công vào hôm nay!\nThời gian: ${new Date().toLocaleString('vi-VN')}`
-          : `${mode === 'checkin' ? 'Check-in' : 'Check-out'} thành công!\nThời gian: ${new Date().toLocaleString('vi-VN')}`,
-        [
-          {
-            text: 'OK',
-            onPress: () => {
-              // Reset captured image after successful check-in
-              setTimeout(async () => {
-                setCapturedImage(null);
-                setUploadStatus(null);
-                // Cập nhật trạng thái checkin trong AsyncStorage
-                try {
-                  const today = new Date().toDateString();
-                  const newStatus = mode === 'checkin' ? true : false;
-                  const checkinData = {
-                    checkedIn: newStatus,
-                    timestamp: new Date().toISOString(),
-                    checkInTime: mode === 'checkin' ? new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', hour12: false }) : null,
-                    checkOutTime: mode === 'checkout' ? new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', hour12: false }) : null
-                  };
-                  await AsyncStorage.setItem(`checkin_${today}`, JSON.stringify(checkinData));
-                  console.log('✅ Updated AsyncStorage checkin status:', checkinData);
-                } catch (error) {
-                  console.error('Error updating checkin status:', error);
-                }
-                
-                // Quay lại trang chủ sau khi thành công
-                console.log('🔄 Navigating back to home...');
-                try {
-                  // Sử dụng replace thay vì back để đảm bảo quay về trang chủ
-                  navigation.replace('(tabs)');
-                } catch (error) {
-                  console.error('Navigation error:', error);
-                  // Fallback: navigate to home tab
-                  navigation.navigate('(tabs)');
-                }
-              }, 1000);
-            }
-          }
-        ]
-      );
-    } catch (error) {
-      console.error('Check-in Error:', error);
-      setUploadStatus('error');
-      
-      // Kiểm tra loại lỗi
-      if (error.code === 'NETWORK_ERROR' || error.message.includes('Network Error') || error.message.includes('404') || error.message.includes('Không thể kết nối đến máy chấm công đơn giản')) {
-        Alert.alert(
-          'Lỗi kết nối',
-          'Không thể kết nối đến máy chấm công đơn giản. Vui lòng kiểm tra:\n1. Kết nối mạng\n2. Server đang hoạt động\n3. Thử lại sau',
-          [
-            {
-              text: 'Thử lại',
-              onPress: () => {
-                // Retry logic có thể thêm ở đây
-              }
-            },
-            {
-              text: 'OK',
-              style: 'cancel'
-            }
-          ]
-        );
-      } else {
-        Alert.alert('Lỗi', 'Không thể kết nối đến hệ thống chấm công đơn giản.');
-      }
-    } finally {
-      setIsUploading(false);
-    }
-  };
-
-  const processCheckInNoImage = async (recognitionResult) => {
-    try {
-      console.log('Bắt đầu chấm công (không ảnh)...');
-
-      // Get current datetime in local timezone (GMT+7 for Vietnam)
-      // Format as local datetime string WITHOUT timezone (YYYY-MM-DDTHH:mm:ss)
-      // Server will treat this as Vietnam time (GMT+7) and convert to UTC for storage
-      const now = new Date();
-      const year = now.getFullYear();
-      const month = String(now.getMonth() + 1).padStart(2, '0');
-      const day = String(now.getDate()).padStart(2, '0');
-      const hours = String(now.getHours()).padStart(2, '0');
-      const minutes = String(now.getMinutes()).padStart(2, '0');
-      const seconds = String(now.getSeconds()).padStart(2, '0');
-      // Format WITHOUT timezone - server will parse as Unspecified and treat as Vietnam time
-      const currentDateTime = `${year}-${month}-${day}T${hours}:${minutes}:${seconds}`;
-      const faceInfo = recognitionResult ? ` - Face Recognition: ${recognitionResult.employeeName} (Confidence: ${(recognitionResult.confidence * 100).toFixed(1)}%)` : '';
-
-      // Generate unique verification token to prevent replay attacks
-      const verificationToken = `${user?.id}_${Date.now()}_${Math.random().toString(36).substring(2, 15)}`;
-      // For VerificationTimestamp, use UTC ISO string since server compares with UTC
-      const verificationTimestamp = now.toISOString();
-      
-      const data = mode === 'checkin' ? {
-        // Use PascalCase to match backend DTO (C# model binding handles camelCase, but PascalCase is safer)
-        EmployeeId: user?.id || 'unknown-user',
-        CheckInDateTime: currentDateTime,
-        Latitude: location?.latitude || 0,
-        Longitude: location?.longitude || 0,
-        Location: activeMachineName || 'Unknown Location',
-        AttendanceMachineId: 2,
-        Notes: `Check-in from mobile app - Ca: ${selectedShift?.shiftName || 'Chưa chọn ca'}${faceInfo}`,
-        // Required face verification fields (PascalCase)
-        MatchedFaceId: recognitionResult?.matchedFaceId || '',
-        MatchConfidence: recognitionResult?.confidence || 0,
-        // Required security fields (PascalCase)
-        VerificationTimestamp: verificationTimestamp,
-        VerificationToken: verificationToken,
-      } : {
-        EmployeeId: user?.id || 'unknown-user',
-        CheckOutDateTime: currentDateTime,
-        Latitude: location?.latitude || 0,
-        Longitude: location?.longitude || 0,
-        Location: activeMachineName || 'Unknown Location',
-        Notes: `Check-out from mobile app - Ca: ${selectedShift?.shiftName || 'Chưa chọn ca'}${faceInfo}`,
-      };
-
-      if (!user?.id) throw new Error('Vui lòng đăng nhập để chấm công');
-      if (!selectedShift) throw new Error('Vui lòng chọn ca làm việc trước khi chấm công');
-
-      // Ensure api is available
-      if (typeof api === 'undefined' || !api || !api.post) {
-        console.error('❌ [CHECKIN] API is not available');
+      if (typeof api === 'undefined' || !api?.post) {
         throw new Error('API service is not available');
       }
 
-      const endpoint = mode === 'checkin' ? '/Attendance/checkin-noimage' : '/Attendance/checkout-noimage';
-      console.log('📤 [CHECKIN] Calling API:', endpoint);
-      console.log('📦 [CHECKIN] Request data:', {
-        EmployeeId: data.EmployeeId,
-        MatchedFaceId: data.MatchedFaceId,
-        MatchConfidence: data.MatchConfidence,
-        VerificationTimestamp: data.VerificationTimestamp,
-        VerificationToken: data.VerificationToken ? `${data.VerificationToken.substring(0, 20)}...` : 'missing'
-      });
-      console.log('📦 [CHECKIN] Full request body keys:', Object.keys(data));
+      const now = new Date();
+      const currentDateTime = formatDateTimeForVietnam(now);
+      const { faceInfo, verificationToken, verificationTimestamp } = createVerificationMetadata(recognitionResult);
       
+      const baseData = {
+        EmployeeId: user.id,
+        Latitude: location?.latitude || 0,
+        Longitude: location?.longitude || 0,
+        Location: activeMachineName || 'Unknown Location',
+        Notes: `${mode === 'checkin' ? 'Check-in' : 'Check-out'} from mobile app - Ca: ${selectedShift.shiftName}${faceInfo}`,
+        MatchedFaceId: recognitionResult?.matchedFaceId || '',
+        MatchConfidence: recognitionResult?.confidence || 0,
+        VerificationTimestamp: verificationTimestamp,
+        VerificationToken: verificationToken,
+      };
+
+      const data = mode === 'checkin' 
+        ? {
+            ...baseData,
+            CheckInDateTime: currentDateTime,
+            AttendanceMachineId: 2,
+            WorkShiftID: selectedShift.id,
+          }
+        : {
+            ...baseData,
+            CheckOutDateTime: currentDateTime,
+            WorkShiftID: selectedShift?.id, // Gửi WorkShiftID khi checkout để xác định ca cụ thể
+          };
+
+      const endpoint = mode === 'checkin' ? '/Attendance/checkin-noimage' : '/Attendance/checkout-noimage';
       const response = await api.post(endpoint, data);
 
       if (response.data?.success) {
         setUploadStatus('success');
         Alert.alert(
           'Thành công',
-          `${mode === 'checkin' ? 'Check-in' : 'Check-out'} thành công!\nThời gian: ${new Date().toLocaleString('vi-VN')}`,
+          `${mode === 'checkin' ? 'Check-in' : 'Check-out'} thành công!\nThời gian: ${now.toLocaleString('vi-VN')}`,
           [
             {
               text: 'OK',
-              onPress: () => {
-                setTimeout(async () => {
-                  setCapturedImage(null);
-                  setUploadStatus(null);
-                  try {
-                    const today = new Date().toDateString();
-                    const newStatus = mode === 'checkin' ? true : false;
-                    const checkinData = {
-                      checkedIn: newStatus,
-                      timestamp: new Date().toISOString(),
-                      checkInTime: mode === 'checkin' ? new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', hour12: false }) : null,
-                      checkOutTime: mode === 'checkout' ? new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', hour12: false }) : null
-                    };
-                    await AsyncStorage.setItem(`checkin_${today}`, JSON.stringify(checkinData));
-                  } catch {}
-                  try {
-                    navigation.replace('(tabs)');
-                  } catch {
-                    navigation.navigate('(tabs)');
-                  }
-                }, 1000);
+              onPress: async () => {
+                setCapturedImage(null);
+                setUploadStatus(null);
+                await saveCheckInStatus(mode, user?.id);
+                setTimeout(() => {
+                  navigation.goBack();
+                }, 1500);
               }
             }
           ]
@@ -1010,19 +557,11 @@ export default function CheckInScreen({ route }) {
         Alert.alert('Lỗi', response.data?.message || 'Không thể chấm công');
       }
     } catch (error) {
-      console.error('❌ [CHECKIN] Check-in No Image Error:', error);
-      console.error('❌ [CHECKIN] Error response:', error.response?.data);
-      console.error('❌ [CHECKIN] Error status:', error.response?.status);
-      console.error('❌ [CHECKIN] Error message:', error.message);
-      
       setUploadStatus('error');
-      const errorMessage = error.response?.data?.message || error.response?.data?.Message || error.message || 'Không thể chấm công';
-      
-      // Log ModelState errors if available
-      if (error.response?.data) {
-        console.error('❌ [CHECKIN] ModelState errors:', JSON.stringify(error.response.data, null, 2));
-      }
-      
+      const errorMessage = error.response?.data?.message || 
+                          error.response?.data?.Message || 
+                          error.message || 
+                          'Không thể chấm công';
       Alert.alert('Lỗi', errorMessage);
     } finally {
       setIsUploading(false);
@@ -1030,16 +569,6 @@ export default function CheckInScreen({ route }) {
   };
 
 
-  const renderWorkshiftItem = ({ item }) => (
-    <View style={styles.shiftItem}>
-      <Text style={styles.shiftName}>{item.shiftName}</Text>
-      {item.shiftDetails && item.shiftDetails.map(detail => (
-        <Text key={detail.id} style={styles.shiftDetail}>
-          {detail.dayOfWeek}: {detail.startTime} - {detail.endTime}
-        </Text>
-      ))}
-    </View>
-  );
 
   const isCheckInDisabled = !isWithinRadius || locationLoading || machinesLoading || !selectedShift;
 
@@ -1099,21 +628,6 @@ export default function CheckInScreen({ route }) {
         </View>
       </View>
 
-      {/* Connection Status */}
-      {connectionStatus === 'testing' && (
-        <View style={styles.connectionStatusBox}>
-          <ActivityIndicator size="small" color="#f59e0b" />
-          <Text style={styles.connectionStatusText}>Đang kiểm tra kết nối server...</Text>
-        </View>
-      )}
-
-      {connectionStatus === 'failed' && (
-        <View style={styles.connectionErrorBox}>
-          <Icon name="wifi-off" size={20} color="#ef4444" />
-          <Text style={styles.connectionErrorText}>Không thể kết nối đến server</Text>
-        </View>
-      )}
-
       <View style={styles.locationStatusBox}>
         {locationLoading || machinesLoading ? (
           <View style={styles.statusLoadingContainer}>
@@ -1148,12 +662,50 @@ export default function CheckInScreen({ route }) {
 
       {/* Work Shift Selection */}
       <View style={styles.shiftSelectionBox}>
-        <Text style={styles.shiftSelectionTitle}>Chọn ca làm việc</Text>
+        <Text style={styles.shiftSelectionTitle}>
+          {mode === 'checkout' ? 'Ca làm việc đã chấm công' : 'Chọn ca làm việc'}
+        </Text>
         <Text style={styles.shiftSelectionSubtitle}>
-          Ca làm việc hôm nay ({date})
+          {mode === 'checkout' ? 'Ca đã chấm công vào hôm nay' : `Ca làm việc hôm nay (${date})`}
         </Text>
         
-        {shiftsLoading ? (
+        {mode === 'checkout' ? (
+          // Checkout mode: Chỉ hiển thị ca đã check-in (read-only)
+          selectedShift ? (
+            <View style={[styles.shiftItem, styles.shiftItemSelected, { opacity: 0.8 }]}>
+              <View style={styles.shiftLeftContent}>
+                <View style={styles.shiftIconContainer}>
+                  <Icon name="clock-outline" size={24} color="#2563eb" />
+                </View>
+                <View style={styles.shiftInfo}>
+                  <Text style={styles.shiftName}>{selectedShift.shiftName}</Text>
+                  {selectedShift.shiftDetails?.find(detail => {
+                    const dayOfWeek = getDayOfWeekNumber(detail.dayOfWeek);
+                    return dayOfWeek === now.getDay();
+                  }) && (
+                    <Text style={styles.shiftTime}>
+                      {selectedShift.shiftDetails.find(detail => {
+                        const dayOfWeek = getDayOfWeekNumber(detail.dayOfWeek);
+                        return dayOfWeek === now.getDay();
+                      }).startTime.substring(0, 5)} - {selectedShift.shiftDetails.find(detail => {
+                        const dayOfWeek = getDayOfWeekNumber(detail.dayOfWeek);
+                        return dayOfWeek === now.getDay();
+                      }).endTime.substring(0, 5)}
+                    </Text>
+                  )}
+                </View>
+              </View>
+              <Icon name="check-circle" size={24} color="#10b981" />
+            </View>
+          ) : (
+            <View style={styles.noShiftContainer}>
+              <Icon name="alert-circle" size={48} color="#ef4444" />
+              <Text style={styles.noShiftText}>
+                Không tìm thấy ca đã chấm công vào
+              </Text>
+            </View>
+          )
+        ) : shiftsLoading ? (
           <View style={styles.noShiftContainer}>
             <ActivityIndicator size="large" color="#3498db" />
             <Text style={styles.noShiftText}>
@@ -1290,8 +842,6 @@ export default function CheckInScreen({ route }) {
       </View>
         </ScrollView>
 
-      {/* Nếu cần camera chấm công thông thường, hãy chuyển sang vision-camera. Nếu không, giữ chỉ SimpleFaceRecognitionCamera */}
-
       <Modal animationType="slide" transparent={false} visible={isFaceRecognitionOpen} onRequestClose={() => setIsFaceRecognitionOpen(false)}>
         <SimpleFaceRecognitionCamera 
           onFaceRecognized={handleFaceRecognized} 
@@ -1427,42 +977,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '500',
     marginTop: 8,
-  },
-  connectionStatusBox: {
-    marginHorizontal: 16,
-    marginTop: 16,
-    backgroundColor: '#fff3cd',
-    borderRadius: 12,
-    padding: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#fbbf24',
-  },
-  connectionStatusText: {
-    color: '#92400e',
-    fontSize: 14,
-    fontWeight: '500',
-    marginLeft: 8,
-  },
-  connectionErrorBox: {
-    marginHorizontal: 16,
-    marginTop: 16,
-    backgroundColor: '#fef2f2',
-    borderRadius: 12,
-    padding: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#fca5a5',
-  },
-  connectionErrorText: {
-    color: '#dc2626',
-    fontSize: 14,
-    fontWeight: '500',
-    marginLeft: 8,
   },
   locationStatusBox: { 
     marginHorizontal: 16, 

@@ -81,6 +81,81 @@ export const useOvertimeRequest = () => {
     }
   };
 
+  const submitForApproval = async (voucherCode, notes) => {
+    try {
+      setLoading(true);
+      setError(null);
+      const data = await overtimeRequestService.submitForApproval(voucherCode, notes);
+      
+      // Cập nhật trong danh sách
+      setOvertimeRequests(prev => 
+        prev.map(item => 
+          item.voucherCode === voucherCode ? { ...item, approveStatus: 'Chờ duyệt' } : item
+        )
+      );
+      
+      return data;
+    } catch (err) {
+      const errorMessage = err.response?.data?.Message || err.response?.data?.message || err.message || 'Có lỗi xảy ra khi gửi duyệt đơn tăng ca';
+      setError(errorMessage);
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const approveOvertimeRequest = async (voucherCode, action, notes) => {
+    try {
+      setLoading(true);
+      setError(null);
+      
+      let data;
+      switch (action) {
+        case 'approve':
+          data = await overtimeRequestService.approve(voucherCode, notes);
+          break;
+        case 'reject':
+          data = await overtimeRequestService.reject(voucherCode, notes);
+          break;
+        case 'return':
+          data = await overtimeRequestService.return(voucherCode, notes);
+          break;
+        default:
+          throw new Error('Invalid approval action');
+      }
+      
+      // Cập nhật trong danh sách
+      let newStatus;
+      switch (action) {
+        case 'approve':
+          newStatus = 'Đã duyệt';
+          break;
+        case 'reject':
+          newStatus = 'Từ chối';
+          break;
+        case 'return':
+          newStatus = 'Tạo mới';
+          break;
+        default:
+          newStatus = 'Chờ duyệt';
+      }
+      
+      setOvertimeRequests(prev => 
+        prev.map(item => 
+          item.voucherCode === voucherCode ? { ...item, approveStatus: newStatus } : item
+        )
+      );
+      
+      return data;
+    } catch (err) {
+      const errorMessage = err.response?.data?.Message || err.response?.data?.message || err.message || 'Có lỗi xảy ra khi duyệt đơn tăng ca';
+      setError(errorMessage);
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const clearError = () => {
     setError(null);
   };
@@ -99,6 +174,8 @@ export const useOvertimeRequest = () => {
     createOvertimeRequest,
     updateOvertimeRequest,
     deleteOvertimeRequest,
+    submitForApproval,
+    approveOvertimeRequest,
     clearError
   };
 };

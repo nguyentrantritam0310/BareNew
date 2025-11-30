@@ -1,33 +1,30 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Image } from 'react-native';
-// import { LinearGradient } from 'expo-linear-gradient';
-// import { BlurView } from 'expo-blur';
+import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 
 const HomeHeader = ({ 
   userName,
-  onLogoutPress,
-  avatarSource
+  onLogoutPress
 }) => {
   return (
     <View style={styles.headerWrap}>
       <View style={styles.headerBlur}>
         <View style={styles.headerRow}>
+          <View style={styles.logoContainer}>
+            <View style={styles.logoGradient}>
+              <Icon name="hard-hat" size={32} color="#ffffff" />
+            </View>
+          </View>
+          
           <TouchableOpacity style={styles.logoutButton} onPress={onLogoutPress}>
             <View style={styles.logoutButtonGradient}>
               <Icon name="logout" size={20} color="#ffffff" />
             </View>
           </TouchableOpacity>
-          
-          <View style={styles.logoContainer}>
-            <View style={styles.logoGradient}>
-              <Image source={avatarSource} style={styles.logo} />
-            </View>
-          </View>
         </View>
         
         <View style={styles.userInfoSection}>
-          <Text style={styles.hello}>Xin chào blef</Text>
+          <Text style={styles.hello}>Xin chào!</Text>
           <Text style={styles.userName}>{userName}</Text>
         </View>
       </View>
@@ -90,13 +87,9 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
     borderRadius: 28,
-    padding: 2,
-    backgroundColor: '#3498db', // Thay thế gradient bằng solid color
-  },
-  logo: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
+    backgroundColor: '#3498db',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   logoutButton: {
     width: 48,
